@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .duration import parse_duration
+from .duration import parse_duration, parse_duration_parts
 from .errors import DslError, Issue, error, warning
 from .expressions import EvalContext, render
 from .graph import CycleError, Edge, bypass_nodes, topological_sort
@@ -194,13 +194,13 @@ class _Expansion:
             raw_duration = source.default_duration
         duration_value = evaluate(raw_duration or 0, "duration")
         try:
-            duration_seconds = parse_duration(
+            duration_seconds, duration_days = parse_duration_parts(
                 duration_value if duration_value is not None else 0,
                 f"{node.path}.duration",
             )
         except DslError as exc:
             self.issues.extend(exc.issues)
-            duration_seconds = 0
+            duration_seconds, duration_days = 0, None
 
         label = evaluate(node.label, "label") or (
             source.display_label if source else node.id
@@ -234,6 +234,7 @@ class _Expansion:
             owner_source=owner_source,
             group=str(evaluate(node.group, "group") or ""),
             duration_seconds=duration_seconds,
+            duration_days=duration_days,
             schedule_mode=node.schedule_mode
             or (source.schedule_mode if source else ScheduleMode.CONTINUOUS),
             calendar=node.calendar

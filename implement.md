@@ -867,6 +867,10 @@ CREATE TABLE template_schedules (
 
 ```python
 class Calendar(Protocol):
+    @property
+    def day_seconds(self) -> int:
+        """一個工作日的秒數，用於換算 `D` 單位的工期。"""
+
     def add(self, start: datetime, seconds: int) -> datetime:
         """自 start 起算，前進 `seconds` 個工作秒數。"""
 
@@ -875,7 +879,19 @@ class Calendar(Protocol):
 
     def next_working_instant(self, t: datetime) -> datetime:
         """若 t 落在非工作時間，回傳下一個工作時刻；否則回傳 t。"""
+
+    def previous_working_instant(self, t: datetime) -> datetime:
+        """若 t 落在非工作時間，回傳上一個工作時刻；否則回傳 t。"""
+
+    def elapsed(self, start: datetime, end: datetime) -> int:
+        """兩個時刻之間的工作秒數，下限為 0。"""
 ```
+
+`elapsed` 是 forward pass 判斷「進行中的 task 做了多少」所需：若用時鐘時間相減，一個掛在週末的 `business` task 會白得到 48 小時的進度。
+
+**`day_seconds` 的取法**：`business` 行事曆取「非零工時中出現次數最多的那個長度」（同票取較長者），而非平均值——這樣半天班的週五不會把「一天」拉低。可在建立行事曆時明確指定覆寫。`continuous` 恆為 86400。
+
+**所有進出行事曆的 datetime 必須帶時區**，naive 值直接拒絕而不預設為 UTC：排程引擎裡一個無聲的時區偏移事後幾乎不可能查出來。
 
 兩個實作：
 
@@ -941,8 +957,9 @@ def forward_pass(tasks, edges, now) -> dict[TaskId, tuple[datetime, datetime]]:
     result = {}
 
     for task in order:                         # 由起點往終點
-        if task.status == 'done':
-            result[task.id] = (task.actual_start, task.actual_end)
+        if task.is_settled:                    # 見 §4.12，不只 done
+            end = task.actual_end or now
+            result[task.id] = (task.actual_start or end, end)
             continue
 
         preds = edges.predecessors_of(task.id)
@@ -958,19 +975,27 @@ def forward_pass(tasks, edges, now) -> dict[TaskId, tuple[datetime, datetime]]:
             )
 
         if task.status == 'running':
-            start = task.actual_start
+            start = task.actual_start           # 已發生的事實，不做對齊
+            work_begins = max(now, start)       # 但剩餘工作從現在算起
         else:
-            start = max(earliest, now)          # 不可能在過去開始
+            start = cal.next_working_instant(max(earliest, now))
+            work_begins = start                 # 不可能在過去開始
 
-        cal = calendar_for(task)
-        start = cal.next_working_instant(start)
-        end = cal.add(start, remaining_seconds(task))
+        end = cal.add(
+            cal.next_working_instant(work_begins),
+            remaining_seconds(task),
+        )
         result[task.id] = (start, end)
 
     return result
 ```
 
-`remaining_seconds(task)`：`running` 中的 task 取 `duration - (now - actual_start)`，下限為 0；其餘取完整 `duration`。
+`remaining_seconds(task)`：`running` 中的 task 取 `duration - calendar.elapsed(actual_start, now)`，下限為 0；其餘取完整 `duration`。用 `elapsed` 而非時鐘時間相減，才不會讓跨週末的 `business` task 虛增進度。
+
+**兩條容易寫錯的規則**
+
+1. **凡「已結算」的 task 都固定住，不只 `done`。** 一個 `cancelled` 的 task 若仍佔用完整工期，會持續把下游往後推——推的是永遠不會發生的工作。已結算但沒有實際時間戳（開始前就被取消）則收斂為現在的零長度區間。
+2. **`running` task 的剩餘工作從 `now` 起算，不是從 `actual_start` 起算。** bar 的起點是實際開工時間（那是事實，不對齊工作時段），但終點必須是「從現在起還要多久」。若從 `actual_start` 加剩餘量，一個已耗盡工期的 task 會算出等於開工時間的結束時間。
 
 Case 的 `forecast_end` = 所有 task 的 `forecast_end` 最大值。健康度由 `forecast_end` 與 `target_date` 的關係決定（判定條件見 [design.md §8.1](design.md#81-健康度定義)）。
 
@@ -996,11 +1021,13 @@ SELECT id FROM downstream;
 以 forecast 結果計算每個 task 的總浮時（total float）：
 
 1. 正推得每個 task 的最早開始 / 結束（即 forward pass 結果）
-2. 反推得每個 task 的最晚開始 / 結束（以 `target_date` 為終點跑 backward pass，但用 forecast 的實際狀態）
+2. 反推得每個 task 的最晚開始 / 結束（以 **case 自身的 forecast 完成時間** 為錨點，用 forecast 的實際狀態）
 3. `float = latest_start - earliest_start`
 4. `float <= 0` 者標記 `is_on_critical_path = TRUE`
 
-已完成的 task 不列入關鍵路徑，`is_optional = TRUE` 的 task 亦不標記（§4.12）。
+**錨點是 forecast 完成時間，不是 target_date。** 這點很容易寫錯：若以 target_date 為錨，一個進度超前的 case 會算出「所有 task 都有浮時」，關鍵路徑變成空集合——但 [design.md §4.3](design.md#43-關鍵路徑) 承諾的是「這條路徑上任一 task 延遲，整個 case 就會延後」，那是**圖的性質**，與距離交期還剩多少無關。距離交期還剩多少由緩衝消耗回答（§5.8），兩者互補而非重複。
+
+已結算的 task 不列入關鍵路徑（它們再也不會延誤任何事），`is_optional = TRUE` 的 task 亦不標記（§4.12）。
 
 **注意**：optional 任務不被標記，不代表它的延遲不會傳播。若有必要任務依賴它，延遲照樣沿圖推進到下游——只是不畫上關鍵路徑的強調樣式。這個區別要在 UI 的說明文字中講明，否則使用者會誤以為 optional 等於「不會拖累進度」。
 

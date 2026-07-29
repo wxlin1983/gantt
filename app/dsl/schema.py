@@ -382,6 +382,9 @@ class ExpandedTask(_Base):
     owner_source: str = "literal"
     group: str = ""
     duration_seconds: int = 0
+    #: Set when the duration was written in ``D`` units, whose meaning depends
+    #: on the calendar (implement.md §4.5).
+    duration_days: float | None = None
     schedule_mode: ScheduleMode = ScheduleMode.CONTINUOUS
     calendar: str = "continuous"
     params: dict[str, Any] = Field(default_factory=dict)

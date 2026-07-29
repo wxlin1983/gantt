@@ -9,19 +9,30 @@ a real flow.
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 import typer
 import yaml
 from rich.console import Console
 from rich.table import Table
 
+from app.config import get_settings
 from app.dsl.duration import format_duration
 from app.dsl.errors import DslError, Issue
 from app.dsl.expansion import expand
 from app.dsl.loader import parse_gantt_template, parse_task_template
 from app.dsl.schema import ExpansionResult, GanttTemplate, TaskTemplate
+from app.scheduling import (
+    apply_baseline,
+    backward_pass,
+    evaluate,
+    from_expansion,
+    office_calendar,
+    registry,
+)
 
 app = typer.Typer(help="Template-driven gantt system", no_args_is_help=True)
 # A fixed width when piped keeps the tables readable in logs and CI.
@@ -215,6 +226,129 @@ def expand_template(
     _print_warnings(result.warnings)
 
 
+@app.command("schedule")
+def schedule_command(
+    template_path: Annotated[
+        Path,
+        typer.Argument(
+            exists=True, dir_okay=False, help="Gantt template YAML"
+        ),
+    ],
+    target: Annotated[
+        str,
+        typer.Option(
+            "--target",
+            "-T",
+            help="Target completion, e.g. 2026-08-21T18:00",
+        ),
+    ],
+    tasks: Annotated[
+        list[Path],
+        typer.Option(
+            "--tasks",
+            "-t",
+            exists=True,
+            help="Task template file or directory (repeatable)",
+        ),
+    ] = [],
+    param: Annotated[
+        list[str],
+        typer.Option("--param", "-p", help="Parameter as name=value"),
+    ] = [],
+    role: Annotated[
+        list[str],
+        typer.Option("--role", "-r", help="Role binding as role=username"),
+    ] = [],
+) -> None:
+    """Expand a template and work the schedule back from a target date.
+
+    Runs the same backward and forward passes case creation would, without a
+    database, so a template's real dates can be checked before committing to
+    it.
+    """
+    zone = ZoneInfo(get_settings().default_timezone)
+    try:
+        target_date = datetime.fromisoformat(target)
+    except ValueError as exc:
+        raise typer.BadParameter(
+            f"--target must be an ISO datetime, got {target!r}"
+        ) from exc
+    if target_date.tzinfo is None:
+        target_date = target_date.replace(tzinfo=zone)
+
+    try:
+        template = parse_gantt_template(template_path.read_text())
+        result = expand(
+            template,
+            _load_task_templates(tasks),
+            params=_parse_assignments(param, "--param"),
+            roles=_parse_assignments(role, "--role"),
+            case={"name": template_path.stem},
+        )
+    except DslError as exc:
+        _report(exc.issues, "Expansion failed")
+        raise typer.Exit(1) from exc
+
+    schedule_tasks, edges = from_expansion(result)
+    calendars = registry(office_calendar())
+    baseline = backward_pass(
+        schedule_tasks,
+        edges,
+        target_date,
+        buffer_seconds=result.buffer_seconds,
+        calendars=calendars,
+    )
+    apply_baseline(schedule_tasks, baseline.intervals)
+    outlook = evaluate(
+        schedule_tasks,
+        edges,
+        target_date,
+        datetime.now(tz=zone),
+        buffer_seconds=result.buffer_seconds,
+        calendars=calendars,
+        forecast=None,
+    )
+
+    labels = {task.id: task.label for task in result.tasks}
+    table = Table(
+        title=(
+            f"{template.template_name} — baseline to "
+            f"{target_date:%Y-%m-%d %H:%M}"
+        ),
+        title_justify="left",
+        header_style="bold",
+    )
+    for column in ("task", "start", "end", "duration", "cal", ""):
+        table.add_column(column)
+    for entry in sorted(result.tasks, key=lambda t: baseline.start_of(t.id)):
+        interval = baseline[entry.id]
+        table.add_row(
+            labels.get(entry.id, entry.id),
+            f"{interval.start.astimezone(zone):%m-%d %H:%M}",
+            f"{interval.end.astimezone(zone):%m-%d %H:%M}",
+            format_duration(entry.duration_seconds),
+            entry.calendar,
+            "critical" if entry.id in outlook.critical_path else "",
+        )
+    console.print(table)
+
+    span = target_date - baseline.earliest_start
+    begins = baseline.earliest_start.astimezone(zone)
+    console.print(
+        f"\nEarliest start [bold]{begins:%Y-%m-%d %H:%M}[/]"
+        f"  ·  span [bold]{format_duration(int(span.total_seconds()))}[/]"
+        f"  ·  critical path [bold]{len(outlook.critical_path)}[/] of "
+        f"{len(result.tasks)} tasks"
+    )
+    if result.buffer_seconds:
+        plan_ends = outlook.plan_deadline.astimezone(zone)
+        console.print(
+            f"Project buffer [bold]{format_duration(result.buffer_seconds)}[/]"
+            f"  ·  plan ends {plan_ends:%m-%d %H:%M}"
+        )
+    _print_warnings(result.warnings)
+
+
 @app.command("validate")
 def validate(
     template_path: Annotated[
@@ -253,11 +387,7 @@ def validate(
         f"{len(template.template_para)} parameters, "
         f"{len(template.roles)} roles"
     )
-    dynamic = [
-        node.id
-        for node in template.flow
-        if node.when is not None
-    ]
+    dynamic = [node.id for node in template.flow if node.when is not None]
     if dynamic:
         console.print(
             "[yellow]note[/] this template's shape depends on parameters "

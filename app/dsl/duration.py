@@ -25,10 +25,16 @@ _UNIT_SECONDS = {
 }
 
 
-def parse_duration(value: str | int | float, path: str = "") -> int:
-    """Convert a duration such as ``12H`` into seconds.
+def parse_duration_parts(
+    value: str | int | float, path: str = ""
+) -> tuple[int, float | None]:
+    """Split a duration into ``(seconds, days)``.
 
-    Bare numbers are treated as seconds so that ``duration: 0`` parses.
+    ``days`` is set only when the value was written in ``D`` units, because
+    that is the one unit whose meaning depends on the calendar: ``2D`` on a
+    business calendar is two working days, not 172800 working seconds. The
+    scheduling engine resolves it against the task's calendar; ``seconds``
+    carries the continuous-time reading for everyone else.
     """
     # bool is a subclass of int, so it has to be rejected explicitly
     if isinstance(value, bool):
@@ -40,7 +46,7 @@ def parse_duration(value: str | int | float, path: str = "") -> int:
             raise DslError.single(
                 "E_BAD_DURATION", f"duration cannot be negative: {value}", path
             )
-        return int(value)
+        return int(value), None
 
     if not isinstance(value, str):
         raise DslError.single(
@@ -56,8 +62,9 @@ def parse_duration(value: str | int | float, path: str = "") -> int:
             path,
         )
 
-    amount, unit = match.group(1), match.group(2).upper()
-    return int(float(amount) * _UNIT_SECONDS[unit])
+    amount, unit = float(match.group(1)), match.group(2).upper()
+    seconds = int(amount * _UNIT_SECONDS[unit])
+    return seconds, (amount if unit == "D" else None)
 
 
 def format_duration(seconds: int) -> str:
@@ -69,3 +76,8 @@ def format_duration(seconds: int) -> str:
         if seconds % size == 0:
             return f"{seconds // size}{unit}"
     return f"{seconds}S"
+
+
+def parse_duration(value: str | int | float, path: str = "") -> int:
+    """Convert a duration such as ``12H`` into continuous seconds."""
+    return parse_duration_parts(value, path)[0]

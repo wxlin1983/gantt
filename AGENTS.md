@@ -48,9 +48,9 @@ app/
   dsl/          模板語言：schema(pydantic)、loader、expressions、graph、expansion
   models/       SQLAlchemy 資料表
   auth/         密碼雜湊與授權規則（純函式）
-  cli.py        gantt expand / gantt validate
+  cli.py        gantt expand / schedule / validate
   config.py     設定；db.py 連線與 session
-  scheduling/   排程引擎（純函式，不碰 DB）      ← 階段 2
+  scheduling/   排程引擎（純函式，不碰 DB）：calendars / passes / analysis
   execution/    task 執行引擎與 handler registry ← 階段 5
 migrations/     Alembic
 examples/       可直接跑的範例模板
@@ -67,8 +67,13 @@ uv run ruff format app/ tests/ && uv run ruff check app/ tests/
 
 # 展開模板看結果（不需要資料庫）
 uv run gantt expand examples/product_launch.yaml \
-  -t examples/task_templates -p batch_count=3 -r pm=alice -r qa_lead=bob
+  -t examples/task_templates -p test_hours=16 -r pm=alice -r qa_lead=bob
 uv run gantt validate examples/product_launch.yaml -t examples/task_templates
+
+# 由目標日期反推出實際日期（也不需要資料庫）
+uv run gantt schedule examples/product_launch.yaml \
+  -t examples/task_templates -T 2026-08-28T18:00 -p test_hours=16 \
+  -r pm=alice -r qa_lead=bob
 
 uv run alembic upgrade head                  # 套用遷移
 uv run alembic revision --autogenerate -m "" # 產生遷移
@@ -81,6 +86,8 @@ uv run alembic revision --autogenerate -m "" # 產生遷移
 ## 注意事項
 
 - **排程引擎必須維持純函式**（輸入任務、依賴、行事曆、目標日期 → 輸出時間），不得存取資料庫。同一份邏輯要同時支撐建立 case、試算預覽、與影響模擬三種用途。
+- **進出行事曆的 datetime 一律帶時區**，naive 值要拒絕而非假設為 UTC。
+- 改動行事曆算術時，`tests/scheduling/test_calendars.py` 有一組對照「逐分鐘暴力法」的 property test——手算的期望值很容易錯，那組才是真正的防線。
 - **Case 快照不可變。** `template_snapshot` 沒有任何更新路徑；模板改版不得影響進行中的 case。
 - **Baseline 建立後不再改變**，唯一例外是明確的 reset-baseline 操作。事後插入的任務 baseline 為 NULL。
 - 新增 DSL 欄位時，同時更新 implement.md 的 §4 規格、§4.7 驗證規則、與 §4.15 展開管線的順序。
