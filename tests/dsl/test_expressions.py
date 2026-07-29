@@ -40,7 +40,6 @@ class TestEvaluation:
             ("{{ para.line in ['A', 'B'] }}", True),
             ("{{ para.line not in ['B'] }}", True),
             ("{{ 1 < para.n <= 3 }}", True),
-            ("{{ range(3) }}", [0, 1, 2]),
             ("{{ len([1, 2]) }}", 2),
             ("{{ max(1, para.n) }}", 3),
             ("{{ min(1, para.n) }}", 1),
@@ -55,17 +54,13 @@ class TestEvaluation:
         assert render(source, ctx) == expected
 
     def test_whole_string_expression_keeps_native_type(self, ctx):
-        assert render("{{ range(2) }}", ctx) == [0, 1]
+        # `when` relies on this: it needs a real bool, not the text "False"
         assert render("{{ para.flag }}", ctx) is True
+        assert render("{{ para.n }}", ctx) == 3
 
     def test_embedded_expression_interpolates_to_text(self, ctx):
         assert render("{{ para.n }}H", ctx) == "3H"
         assert render("{{ case.name }} - QA", ctx) == "C1 - QA"
-
-    def test_loop_variables(self, ctx):
-        loop = ctx.with_loop("x", 2)
-        assert render("{{ index + 1 }}", loop) == 3
-        assert render("{{ item }}", loop) == "x"
 
     def test_non_string_passes_through(self, ctx):
         assert render(12, ctx) == 12
@@ -96,6 +91,8 @@ class TestContainment:
             "{{ x := 1 }}",
             "{{ para }}",
             "{{ unknown_name }}",
+            # range() went away with for_each; nothing consumes a sequence now
+            "{{ range(3) }}",
         ],
     )
     def test_rejected_syntax(self, source, ctx):
@@ -106,7 +103,6 @@ class TestContainment:
         "source",
         [
             "{{ 2 ** 9999999 }}",
-            "{{ range(10 * 1000 * 1000) }}",
             "{{ 'x' * 999999999 }}",
             "{{ [1] * 999999999 }}",
         ],
@@ -119,11 +115,6 @@ class TestContainment:
         with pytest.raises(DslError) as exc:
             render("{{ para.nope }}", ctx)
         assert exc.value.issues[0].code == "E_UNKNOWN_PARAM"
-
-    def test_loop_variable_outside_loop(self, ctx):
-        with pytest.raises(DslError) as exc:
-            render("{{ index }}", ctx)
-        assert exc.value.issues[0].code == "E_BAD_EXPRESSION"
 
     def test_division_by_zero_is_a_dsl_error(self, ctx):
         with pytest.raises(DslError):

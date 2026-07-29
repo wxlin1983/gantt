@@ -115,14 +115,11 @@ class CaseTask(Base):
     case_id: Mapped[int] = mapped_column(
         ForeignKey("gantt_cases.id", ondelete="CASCADE")
     )
-    #: Unique within the case, including any for_each suffix.
+    #: Unique within the case.
     name: Mapped[str] = mapped_column(String(128))
     display_name: Mapped[str] = mapped_column(String(256), default="")
     source_task_template: Mapped[str | None] = mapped_column(String(64))
     phase: Mapped[str] = mapped_column(String(128), default="")
-
-    for_each_group: Mapped[str | None] = mapped_column(String(128))
-    for_each_index: Mapped[int | None] = mapped_column(Integer)
 
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
     schedule_mode: Mapped[ScheduleMode] = mapped_column(

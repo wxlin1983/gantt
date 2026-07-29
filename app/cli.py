@@ -111,8 +111,6 @@ def _print_result(template: GanttTemplate, result: ExpansionResult) -> None:
         flags = []
         if task.optional:
             flags.append("optional")
-        if task.for_each_group:
-            flags.append(f"from {task.for_each_group}")
         if task.task_api:
             flags.append(f"api:{task.task_api}")
         owner = task.owner or f"[dim]<{task.owner_source}>[/]"
@@ -237,10 +235,10 @@ def validate(
 ) -> None:
     """Check a template's structure without supplying parameters.
 
-    Only syntax and references can be checked here. A template using `when` or
-    `for_each` changes shape with its parameters, so a clean result does not
-    prove the expanded graph is sound (implement.md §4.7). Use `expand` with a
-    real parameter set for that.
+    Only syntax and references can be checked here. A template using `when`
+    changes shape with its parameters, so a clean result does not prove the
+    resulting graph is sound (implement.md §4.7). Use `expand` with a real
+    parameter set for that.
     """
     try:
         template = parse_gantt_template(template_path.read_text())
@@ -258,7 +256,7 @@ def validate(
     dynamic = [
         node.id
         for node in template.flow
-        if node.when is not None or node.for_each is not None
+        if node.when is not None
     ]
     if dynamic:
         console.print(

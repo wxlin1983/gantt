@@ -133,15 +133,17 @@ class TestStructuralValidation:
             )
         assert "E_MISSING_FIELD" in codes(exc.value)
 
-    def test_sequential_requires_for_each(self):
+    def test_removed_field_is_rejected(self):
+        # for_each was dropped; a template still using it must fail loudly
+        # rather than have the field silently ignored.
         with pytest.raises(DslError) as exc:
             parse_gantt_template(
                 {
                     "template_name": "t",
-                    "flow": [{"id": "a", "sequential": True}],
+                    "flow": [{"id": "a", "for_each": "{{ [1] }}"}],
                 }
             )
-        assert "E_MISSING_FIELD" in codes(exc.value)
+        assert "E_UNKNOWN_FIELD" in codes(exc.value)
 
 
 class TestRequirementShapes:

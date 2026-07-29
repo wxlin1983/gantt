@@ -1,9 +1,12 @@
 """Build-time expansion pipeline (implement.md §4.15).
 
 The ordering of the stages is part of the specification, not an implementation
-detail: `when` decides whether a node exists at all, `for_each` then decides
-how many copies exist, and only afterwards can the remaining expressions and
-the dependency edges be resolved.
+detail: `when` decides whether a node exists at all, and only afterwards can
+the remaining expressions and the dependency edges be resolved.
+
+One flow node yields at most one task. That invariant is what keeps edge
+handling trivial -- a task's id is its node id, so the edge list that survives
+`bypass_nodes` is already the final one.
 
 The whole module is a pure function of (template, task templates, parameters).
 The same inputs always produce the same graph, which is what lets case
@@ -71,8 +74,6 @@ class _Expansion:
         self.ctx = ctx
         self.issues: list[Issue] = []
         self.warnings: list[Issue] = []
-        #: original node id -> expanded task ids ([] when the node vanished)
-        self.instances: dict[str, list[str]] = {}
         self.skipped: list[SkippedTask] = []
         self.tasks: list[ExpandedTask] = []
 
@@ -81,21 +82,14 @@ class _Expansion:
     def run(self) -> ExpansionResult:
         self._check_unknown_references()
         skipped = self._evaluate_when()
-        expansions = self._evaluate_for_each(skipped)
-        skipped |= {
-            node_id for node_id, items in expansions.items() if not items
-        }
         self._flush()
 
-        original_edges = self._original_edges(skipped)
-        surviving = bypass_nodes(original_edges, skipped)
+        edges = bypass_nodes(self._node_edges(), skipped)
 
-        self._build_tasks(expansions, skipped)
-        edges = self._instance_edges(surviving)
-        edges += self._sequential_edges(expansions, skipped)
+        self._build_tasks(skipped)
         self._flush()
 
-        self._resolve_owners(edges)
+        self._resolve_owners()
         self._check_graph(edges)
         self._flush()
 
@@ -151,65 +145,14 @@ class _Expansion:
                 )
         return skipped
 
-    # -- stage 5: for_each -------------------------------------------------
+    # -- stage 5+6: tasks and edges ---------------------------------------
 
-    def _evaluate_for_each(
-        self, skipped: set[str]
-    ) -> dict[str, list[tuple[Any, int]]]:
-        """Map each node to its ``(item, index)`` pairs.
+    def _node_edges(self) -> list[Edge]:
+        """Dependency edges, including those touching skipped nodes.
 
-        Plain nodes get a single pair carrying a sentinel item, which keeps the
-        downstream code uniform: everything is a list of instances.
-        """
-        expansions: dict[str, list[tuple[Any, int]]] = {}
-        for node in self.template.flow:
-            if node.id in skipped:
-                expansions[node.id] = []
-                continue
-            if node.for_each is None:
-                expansions[node.id] = [(None, 0)]
-                continue
-
-            path = f"{node.path}.for_each"
-            try:
-                items = render(node.for_each, self.ctx, path)
-            except DslError as exc:
-                self.issues.extend(exc.issues)
-                expansions[node.id] = []
-                continue
-
-            if isinstance(items, str) or not isinstance(
-                items, list | tuple | range
-            ):
-                self._fail(
-                    "E_BAD_FOR_EACH",
-                    f"`for_each` must evaluate to a sequence, got "
-                    f"{type(items).__name__} ({items!r})",
-                    path,
-                )
-                expansions[node.id] = []
-                continue
-
-            pairs = [(item, i) for i, item in enumerate(items)]
-            expansions[node.id] = pairs
-            if not pairs:
-                self.skipped.append(
-                    SkippedTask(
-                        id=node.id,
-                        label=node.label or node.id,
-                        reason="for_each expanded to zero instances",
-                    )
-                )
-        return expansions
-
-    # -- stage 6+7: tasks and edges ---------------------------------------
-
-    def _original_edges(self, skipped: set[str]) -> list[Edge]:
-        """Dependency edges at the pre-expansion node level.
-
-        Lags are evaluated here with the base context, so a lag cannot vary
-        per ``for_each`` instance. That keeps a skipped node's wait time
-        well-defined when its two sides get stitched together.
+        Skipped nodes are left in deliberately: ``bypass_nodes`` needs them to
+        work out which neighbours to stitch together, and how much lag to
+        carry across the gap.
         """
         edges: list[Edge] = []
         for node in self.template.flow:
@@ -227,56 +170,17 @@ class _Expansion:
                     )
                     continue
                 edges.append((ref.task, node.id, lag_seconds))
-        # Nodes that vanished still take part here; bypass_nodes removes them
-        # afterwards so their neighbours get stitched together.
-        del skipped
         return edges
 
-    def _build_tasks(
-        self,
-        expansions: dict[str, list[tuple[Any, int]]],
-        skipped: set[str],
-    ) -> None:
-        seen: dict[str, str] = {}
+    def _build_tasks(self, skipped: set[str]) -> None:
         for node in self.template.flow:
             if node.id in skipped:
-                self.instances[node.id] = []
                 continue
-            produced: list[str] = []
-            for item, index in expansions[node.id]:
-                loop_ctx = (
-                    self.ctx.with_loop(item, index)
-                    if node.for_each is not None
-                    else self.ctx
-                )
-                task = self._build_task(node, loop_ctx, item, index)
-                if task is None:
-                    continue
-                if task.id in seen:
-                    self._fail(
-                        "E_DUP_EXPANDED_ID",
-                        f"task id `{task.id}` is produced by both "
-                        f"{seen[task.id]} and {node.id}; give the expansion "
-                        "a distinct `id_suffix`",
-                        node.path,
-                    )
-                    continue
-                seen[task.id] = node.id
-                produced.append(task.id)
-                self.tasks.append(task)
-            self.instances[node.id] = produced
+            self.tasks.append(self._build_task(node))
 
-    def _build_task(
-        self,
-        node: FlowNode,
-        ctx: EvalContext,
-        item: Any,
-        index: int,
-    ) -> ExpandedTask | None:
+    def _build_task(self, node: FlowNode) -> ExpandedTask:
         source = self.task_templates.get(node.uses) if node.uses else None
-        task_id = self._instance_id(node, ctx, index)
-        if task_id is None:
-            return None
+        ctx = self.ctx
 
         def evaluate(value: Any, field_name: str) -> Any:
             try:
@@ -323,7 +227,7 @@ class _Expansion:
         )
 
         return ExpandedTask(
-            id=task_id,
+            id=node.id,
             label=str(label),
             uses=node.uses,
             owner=owner_value,
@@ -345,23 +249,8 @@ class _Expansion:
             allow_manual_override=(
                 source.allow_manual_override if source else True
             ),
-            for_each_group=node.id if node.for_each is not None else None,
-            for_each_index=index if node.for_each is not None else None,
             source_index=node.source_index,
         )
-
-    def _instance_id(
-        self, node: FlowNode, ctx: EvalContext, index: int
-    ) -> str | None:
-        if node.for_each is None:
-            return node.id
-        suffix_source = node.id_suffix if node.id_suffix is not None else index
-        try:
-            suffix = render(suffix_source, ctx, f"{node.path}.id_suffix")
-        except DslError as exc:
-            self.issues.extend(exc.issues)
-            return None
-        return f"{node.id}_{suffix}"
 
     def _owner_spec(
         self, node: FlowNode, source: TaskTemplate | None
@@ -410,39 +299,10 @@ class _Expansion:
                 return None, f"same_as:{spec.value}"
         return None, "literal"
 
-    def _instance_edges(self, original: list[Edge]) -> list[Edge]:
-        """Project node-level edges onto the expanded instances.
+    # -- stage 7: owners ---------------------------------------------------
 
-        A dependency on an expanded group means "wait for all of them", so the
-        projection is a full cross product.
-        """
-        edges: list[Edge] = []
-        for predecessor, successor, lag in original:
-            for source_id in self.instances.get(predecessor, []):
-                for target_id in self.instances.get(successor, []):
-                    edges.append((source_id, target_id, lag))
-        return edges
-
-    def _sequential_edges(
-        self,
-        expansions: dict[str, list[tuple[Any, int]]],
-        skipped: set[str],
-    ) -> list[Edge]:
-        """Chain ``for_each`` instances when ``sequential: true``."""
-        edges: list[Edge] = []
-        for node in self.template.flow:
-            if node.for_each is None or not node.sequential:
-                continue
-            if node.id in skipped:
-                continue
-            ids = self.instances.get(node.id, [])
-            edges.extend((ids[i], ids[i + 1], 0) for i in range(len(ids) - 1))
-        return edges
-
-    # -- stage 8: owners ---------------------------------------------------
-
-    def _resolve_owners(self, edges: list[Edge]) -> None:
-        """Resolve ``same_as`` chains in dependency order."""
+    def _resolve_owners(self) -> None:
+        """Resolve ``same_as`` chains, following them to their source."""
         by_id = {task.id: task for task in self.tasks}
         pending = {
             task.id: task.owner_source.removeprefix("same_as:")
@@ -452,8 +312,6 @@ class _Expansion:
         if not pending:
             return
 
-        # same_as targets a pre-expansion node id, which may have expanded
-        # into several tasks; the first instance is the canonical one.
         resolved: dict[str, str | None] = {}
 
         def resolve(task_id: str, seen: tuple[str, ...]) -> str | None:
@@ -473,25 +331,24 @@ class _Expansion:
                 resolved[task_id] = value
                 return value
 
-            candidates = self.instances.get(target_node, [])
-            if not candidates:
+            if target_node not in by_id:
+                # The target exists in the template but `when` removed it.
                 self._fail(
                     "E_UNKNOWN_SAME_AS",
-                    f"owner.same_as points at `{target_node}`, which does not "
-                    "exist in this case",
+                    f"owner.same_as points at `{target_node}`, which is not "
+                    "part of this case",
                     by_id[task_id].id,
                 )
                 resolved[task_id] = None
                 return None
-            value = resolve(candidates[0], (*seen, task_id))
+            value = resolve(target_node, (*seen, task_id))
             resolved[task_id] = value
             return value
 
-        del edges
         for task_id in list(pending):
             by_id[task_id].owner = resolve(task_id, ())
 
-    # -- stage 9: graph validation ----------------------------------------
+    # -- stage 8: graph validation ----------------------------------------
 
     def _check_unknown_references(self) -> None:
         known = {node.id for node in self.template.flow}

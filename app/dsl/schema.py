@@ -22,7 +22,6 @@ from pydantic import (
     ConfigDict,
     Field,
     ValidationError,
-    field_validator,
     model_validator,
 )
 
@@ -272,9 +271,6 @@ class FlowNode(_Base):
         default=None, validation_alias=_aliased("duration", FLOW_ALIASES)
     )
     when: str | None = None
-    for_each: str | None = None
-    id_suffix: str | int | None = None
-    sequential: bool = False
     schedule_mode: ScheduleMode | None = None
     calendar: str | None = None
     task_para: dict[str, Any] = Field(default_factory=dict)
@@ -292,16 +288,6 @@ class FlowNode(_Base):
         if isinstance(data, dict) and "requirement" in data:
             data = {**data, "requirement": _normalise_requirement(data)}
         return data
-
-    @field_validator("sequential")
-    @classmethod
-    def _sequential_needs_for_each(cls, value: bool, info) -> bool:
-        if value and not info.data.get("for_each"):
-            raise ValueError(
-                "E_MISSING_FIELD: `sequential` only applies to a `for_each` "
-                "node"
-            )
-        return value
 
     @property
     def path(self) -> str:
@@ -406,8 +392,6 @@ class ExpandedTask(_Base):
     phase: str = ""
     warn_before_seconds: int = 7200
     allow_manual_override: bool = True
-    for_each_group: str | None = None
-    for_each_index: int | None = None
     source_index: int = 0
 
 

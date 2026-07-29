@@ -214,14 +214,10 @@ CREATE INDEX idx_cases_health ON gantt_cases(health) WHERE status = 'active';
 CREATE TABLE case_tasks (
     id            BIGSERIAL PRIMARY KEY,
     case_id       BIGINT NOT NULL REFERENCES gantt_cases(id) ON DELETE CASCADE,
-    name          TEXT NOT NULL,          -- case 內唯一（含 for_each 展開後的後綴）
+    name          TEXT NOT NULL,          -- case 內唯一
     display_name  TEXT NOT NULL,
     source_task_template TEXT,            -- 快照來源，僅供追溯
-    phase         TEXT,                   -- 視覺分組標籤（§4.14）
-
-    -- for_each 展開的來源追溯（§4.12）；未展開的任務兩欄皆為 NULL
-    for_each_group TEXT,                  -- 展開前的節點 id，如 'batch_test'
-    for_each_index INTEGER,
+    phase         TEXT,                   -- 視覺分組標籤（§4.13）
 
     -- 排程輸入
     duration_seconds INTEGER NOT NULL,    -- 已展開參數並解析後的秒數
@@ -262,7 +258,7 @@ CREATE TABLE case_tasks (
     api_config    JSONB NOT NULL DEFAULT '{}'::jsonb,
     allow_manual_override BOOLEAN NOT NULL DEFAULT TRUE,
 
-    -- 失敗策略與可選性（§4.13）
+    -- 失敗策略與可選性（§4.12）
     on_failure    TEXT NOT NULL DEFAULT 'block',   -- 'block'|'continue'|'cancel_case'
     is_optional   BOOLEAN NOT NULL DEFAULT FALSE,
     warn_before_seconds INTEGER NOT NULL DEFAULT 7200,
@@ -424,7 +420,7 @@ gantt:
   description: 新產品導入流程          # 選填
   buffer: 8H                          # 專案緩衝，見 §5.8；預設 0
 
-  schedule:                           # 選填，週期性自動建立 case，見 §4.16
+  schedule:                           # 選填，週期性自動建立 case，見 §4.15
     cron: "0 9 5 * *"                 # 每月 5 號 09:00
     timezone: Asia/Taipei
     target_date_offset: 3D            # 目標日期 = 建立時間 + 3 天
@@ -445,7 +441,7 @@ gantt:
       para_default: 1
       required: true                  # 預設 true
       group: 產能設定                  # 選填，建立精靈的欄位分組標題
-      description: 批次數量，決定測試階段展開幾個平行任務
+      description: 測試階段的允許工時
       validation:                     # 選填
         min: 1
         max: 10
@@ -458,7 +454,7 @@ gantt:
       para_default: A
 
   flow:
-    - phase: 準備階段                  # 見 §4.14，純視覺分組，不影響依賴
+    - phase: 準備階段                  # 見 §4.13，純視覺分組，不影響依賴
       tasks:
         - id: my_task1                # 原 task_name；case 內唯一，requirement 參照它
           uses: tt1                   # 原 task_template
@@ -470,10 +466,9 @@ gantt:
 
     - phase: 測試階段
       tasks:
-        - id: batch_test
+        - id: functional_test
           uses: tt2
-          for_each: "{{ range(para.my_para1) }}"     # 見 §4.12，展開成 N 個平行任務
-          label: "第 {{ index + 1 }} 批測試"
+          label: 功能測試
           owner: { role: qa_lead }
           group: my_group_name2
           duration: 12H
@@ -499,17 +494,17 @@ gantt:
           owner: { same_as: my_task1 }               # 與需求確認同一人
           group: my_group_name3
           duration: 12H
-          requirement: [batch_test, safety_review]   # 引用展開組 = 等全部批次完成
+          requirement: [functional_test, safety_review]   # 多前置，全部完成
 
         - id: notify
           uses: tt7
           requirement: my_task3
           duration: 10M
-          on_failure: continue                       # 見 §4.13
+          on_failure: continue                       # 見 §4.12
           optional: true
 ```
 
-**最小寫法仍然有效。** 不使用 `roles` / `phase` / `when` / `for_each` 時，`flow` 可直接是扁平的任務陣列，`owner` 可直接寫使用者名稱——即原始構想的形式。
+**最小寫法仍然有效。** 不使用 `roles` / `phase` / `when` 時，`flow` 可直接是扁平的任務陣列，`owner` 可直接寫使用者名稱——即原始構想的形式。
 
 ### 4.2 Task 模板
 
@@ -536,7 +531,7 @@ task:
   api_retry_interval: 5M
   api_poll_interval: 60S
   allow_manual_override: true
-  on_failure: block                    # 見 §4.13，可被 flow 節點覆寫
+  on_failure: block                    # 見 §4.12，可被 flow 節點覆寫
 ```
 
 ### 4.3 `requirement` 的寫法
@@ -553,8 +548,6 @@ task:
 
 **Lag 語義**：後續任務的最早開始時間 = 前置結束時間 + lag。Lag 期間不佔用任何人力（養護、冷卻、等待對方回覆等），Gantt 上以兩條 bar 之間的虛線間隔呈現。Lag 以**後續任務**的行事曆換算，因此 `business` 模式下的 lag 會跳過非工作時間。不接受負值——負 lag 實質上是 SS 依賴，見 §14。
 
-**引用展開組**：若 `requirement` 參照的 id 是一個 `for_each` 節點（§4.12），展開後自動轉為「依賴該組全部實例」。
-
 目前不支援 OR 語義；若日後需要，將以獨立的 `requirement_mode: all \| any` 欄位擴充，不改變現有寫法。
 
 ### 4.4 參數引用語法
@@ -568,15 +561,16 @@ task:
 | `para.*` | 使用者填入的模板參數 | `{{ para.my_para1 }}` |
 | `case.*` | `case.name`、`case.target_date`、`case.created_at` | `{{ case.name }} - 檢驗` |
 | `role.*` | 建立 case 時綁定的角色使用者名稱（§4.10） | `{{ role.pm }}` |
-| `item` / `index` | **僅在 `for_each` 節點內可用**：目前元素與其 0-based 索引 | `{{ index + 1 }}` |
 
-支援的運算：四則運算、比較運算（`==` `!=` `<` `>` `<=` `>=`）、布林運算（`and` / `or` / `not`）、`in`、括號、字串串接，以及白名單函式 `int()` / `float()` / `str()` / `round()` / `max()` / `min()` / `len()` / `range()`。
+支援的運算：四則運算、比較運算（`==` `!=` `<` `>` `<=` `>=`）、布林運算（`and` / `or` / `not`）、`in`、括號、字串串接，以及白名單函式 `int()` / `float()` / `str()` / `round()` / `max()` / `min()` / `len()`。
+
+**次方運算未開放**，因為規格只需要四則運算，而 `2 ** 9999999` 是廉價的 DoS 向量。字串與陣列的重複（`'x' * n`）另有長度上限保護。
 
 實作使用受限的 AST 求值器（`ast.parse` + 白名單節點走訪），**不使用 `eval`**。屬性存取、下標、函式定義、匯入、推導式一律拒絕。求值失敗時建立 case 的請求整筆失敗並回報具體位置。
 
-**可用於**：`duration`、`owner`、`group`、`label`、`task_para` 的值、`when`、`for_each`、`lag`、`id_suffix`。
+**可用於**：`duration`、`owner`、`group`、`label`、`task_para` 的值、`when`、`lag`。
 
-**不可用於** `id` 與 `requirement`——流程結構必須在模板層就是靜態可驗證的，否則驗證器無法在發布前偵測循環依賴。（`for_each` 展開產生的 id 由 `id_suffix` 依固定規則生成，仍屬靜態可推導，見 §4.12。）
+**不可用於** `id` 與 `requirement`——流程結構必須在模板層就是靜態可驗證的，否則驗證器無法在發布前偵測循環依賴。
 
 ### 4.5 Duration 格式
 
@@ -617,7 +611,7 @@ task:
 | `E_UNKNOWN_TASK_TEMPLATE` | `uses` 參照不存在的 Task 模板 |
 | `E_BAD_DURATION` | `duration` 不符 §4.5 格式 |
 | `E_ALIAS_CONFLICT` | 同一節點同時使用正式欄位名與舊別名（§4.9） |
-| `E_MIXED_FLOW_FORM` | `flow` 混用扁平陣列與 `phase` 分段兩種寫法（§4.14） |
+| `E_MIXED_FLOW_FORM` | `flow` 混用扁平陣列與 `phase` 分段兩種寫法（§4.13） |
 | `E_UNKNOWN_PARAM` | `{{ para.x }}` 中的 `x` 未在 `template_para` 定義 |
 | `E_BAD_EXPRESSION` | 運算式語法錯誤或使用了白名單外的節點 |
 | `E_UNKNOWN_CALENDAR` | `calendar` 參照不存在的行事曆 |
@@ -627,8 +621,6 @@ task:
 | `E_SAME_AS_CYCLE` | `owner.same_as` 形成循環 |
 | `E_NEGATIVE_LAG` | `lag` 為負值 |
 | `E_BAD_WHEN` | `when` 求值結果非布林值 |
-| `E_BAD_FOR_EACH` | `for_each` 求值結果非序列 |
-| `E_DUP_EXPANDED_ID` | `for_each` 展開後 id 撞名（`id_suffix` 未產生唯一值） |
 | `E_ALL_TASKS_SKIPPED` | 所有任務都被 `when` 濾掉，產生空流程 |
 
 **警告**
@@ -643,11 +635,10 @@ task:
 | `W_UNASSIGNED_OWNER` | 任務未指定 `owner` 且無任何後備來源 |
 | `W_MULTI_GROUP_LEAD` | `group_lead` 對應到多位 lead，將取第一位 |
 | `W_CONDITIONAL_SINK` | 受 `when` 控制的節點同時是終點，條件為 false 時會改變 case 的終點結構 |
-| `W_FOR_EACH_MAY_BE_EMPTY` | `for_each` 運算式可能展開為 0 個實例 |
 | `W_CONSTANT_WHEN` | `when` 為常數（永遠 true 或永遠 false），可能是筆誤 |
 | `W_UNUSED_ROLE` | `roles` 宣告後未被任何任務使用 |
 
-**驗證的時機限制**：`when` 與 `for_each` 的結果取決於建立 case 時填入的參數，因此模板層驗證只能檢查**語法與參照**，無法確認展開後的圖形（例如「條件都為 false 時流程會不會斷開」）。這使得 [design.md §9.3](design.md#93-試算預覽) 的**試算預覽**從便利功能升級為必要的驗證手段——編輯器應在模板含有 `when` 或 `for_each` 時主動提示管理員至少試算一組參數。
+**驗證的時機限制**：`when` 的結果取決於建立 case 時填入的參數，因此模板層驗證只能檢查**語法與參照**，無法確認過濾後的圖形（例如「條件都為 false 時流程會不會斷開」）。這使得 [design.md §9.3](design.md#93-試算預覽) 的**試算預覽**從便利功能升級為必要的驗證手段——編輯器應在模板含有 `when` 時主動提示管理員至少試算一組參數。
 
 ### 4.8 Case 快照格式
 
@@ -748,37 +739,7 @@ roles:
 
 Case 詳情頁會列出因條件而略過的任務清單（唯讀），讓使用者知道模板裡還有哪些步驟這次沒跑。
 
-### 4.12 展開任務 `for_each`
-
-`my_para1: 批次數量` 這類參數的正確表達方式。原本只能寫成 `duration: "{{ para.my_para1 * 12 }}H"`，但那是把 3 個批次當成一個三倍長的任務——無法分別指派、分別追蹤、分別重試。
-
-```yaml
-- id: batch_test
-  uses: tt2
-  for_each: "{{ range(para.my_para1) }}"   # my_para1 = 3 → [0, 1, 2]
-  id_suffix: "{{ index }}"                  # 選填，預設即為 index
-  label: "第 {{ index + 1 }} 批測試"
-  owner: { role: qa_lead }
-  requirement: my_task1
-  duration: 12H
-  sequential: false                         # 預設 false = 平行
-```
-
-**語義**
-
-- `for_each` 求值須得到序列。常見寫法：`{{ range(para.n) }}` 產生 `[0..n-1]`；直接引用 list 型參數則以其元素展開
-- 展開後產生 N 個獨立的 `case_tasks`，id 為 `{id}_{id_suffix}`（預設 `batch_test_0`、`batch_test_1`…）
-- 節點內可用 `item`（目前元素）與 `index`（0-based 索引）兩個變數
-- `sequential: true` 時把實例串成鏈（`batch_test_0 → batch_test_1 → …`）而非平行；適合共用同一台設備的批次
-- 展開為 0 個實例時等同該節點不存在，依賴依 §4.11 的規則接回
-
-**被引用時的語義**：其他任務 `requirement: batch_test` 展開為「依賴全部 N 個實例」（AND）。這是最常見的匯流需求。
-
-**不支援配對依賴**：兩個同樣展開 N 份的節點無法「第 i 個對第 i 個」逐一配對，只能全體匯流後再展開。若實際需要，見 §14。
-
-與 `when` 併用時，先求值 `when`（節點層級），再展開 `for_each`。
-
-### 4.13 失敗策略 `on_failure` 與 `optional`
+### 4.12 失敗策略 `on_failure` 與 `optional`
 
 目前 API 失敗一律卡住等人介入，但有些步驟失敗不該擋住主線。
 
@@ -812,7 +773,7 @@ def is_settled(task) -> bool:
 
 **optional 不代表延遲不會傳播。** 若有必要任務依賴這個 optional 任務，它的延遲照樣推遲下游——這是圖的結構決定的，不是旗標能改變的。
 
-### 4.14 `phase` 視覺分段
+### 4.13 `phase` 視覺分段
 
 12 個步驟以上的 `flow` 攤平成單一陣列就難以閱讀。
 
@@ -829,9 +790,11 @@ flow:
 
 扁平寫法（`flow` 直接是任務陣列）永遠支援；兩種寫法不可在同一模板內混用（`E_MISSING_FIELD` 的變體 `E_MIXED_FLOW_FORM`）。
 
-### 4.15 建立期展開管線
+### 4.14 建立期展開管線
 
-`when` / `for_each` / 運算式 / 依賴解析的**執行順序影響結果**，因此明訂如下。整條管線是純函式，同一組輸入必然產生同一個圖，這是快照與試算預覽能一致的前提。
+`when` / 運算式 / 依賴解析的**執行順序影響結果**，因此明訂如下。整條管線是純函式，同一組輸入必然產生同一個圖，這是快照與試算預覽能一致的前提。
+
+**一個 flow 節點最多產生一個 task。** 這個不變量讓依賴處理保持簡單：task 的 id 就是節點 id，因此 bypass 之後留下的邊直接就是最終結果，不需要任何投影。
 
 | # | 階段 | 說明 |
 |---|---|---|
@@ -839,7 +802,6 @@ flow:
 | 2 | 套用別名 | 舊欄位名正規化為正式名稱（§4.9） |
 | 3 | 驗證參數值 | 對照 `template_para` 檢查型別、必填、`validation` |
 | 4 | 求值 `when` | 節點層級，false 者標記為略過 |
-| 5 | 展開 `for_each` | 產生實例節點，注入 `item` / `index` |
 | 6 | 求值其餘運算式 | `duration`、`label`、`owner`、`task_para`、`lag` |
 | 7 | 解析依賴 | 展開組引用、略過節點的 bypass 接回、lag 相加 |
 | 8 | 解析 owner | 依拓撲順序處理 `same_as` 與各種後備 |
@@ -849,7 +811,7 @@ flow:
 
 步驟 1–9 產出的中間結構同時供**建立 case**（落地）與 **`/preview` 試算**（不落地）使用，確保兩者結果一致。
 
-### 4.16 週期性自動建立
+### 4.15 週期性自動建立
 
 「月結關帳」這類流程本來就是固定週期跑的，不該每個月要人手動建一次。模板可宣告排程：
 
@@ -1038,7 +1000,7 @@ SELECT id FROM downstream;
 3. `float = latest_start - earliest_start`
 4. `float <= 0` 者標記 `is_on_critical_path = TRUE`
 
-已完成的 task 不列入關鍵路徑，`is_optional = TRUE` 的 task 亦不標記（§4.13）。
+已完成的 task 不列入關鍵路徑，`is_optional = TRUE` 的 task 亦不標記（§4.12）。
 
 **注意**：optional 任務不被標記，不代表它的延遲不會傳播。若有必要任務依賴它，延遲照樣沿圖推進到下游——只是不畫上關鍵路徑的強調樣式。這個區別要在 UI 的說明文字中講明，否則使用者會誤以為 optional 等於「不會拖累進度」。
 
@@ -1279,7 +1241,7 @@ task:
 
 規則：
 
-- `pending → ready` 由前置 task **結算**時觸發，在同一交易內完成。放行條件是「所有前置 `is_settled`」而非「所有前置 `done`」——見 §4.13 的 `is_settled()` 定義，`cancelled` 與 `on_failure: continue` 的 `failed` 都算結算完畢
+- `pending → ready` 由前置 task **結算**時觸發，在同一交易內完成。放行條件是「所有前置 `is_settled`」而非「所有前置 `done`」——見 §4.12 的 `is_settled()` 定義，`cancelled` 與 `on_failure: continue` 的 `failed` 都算結算完畢
 - `on_failure: cancel_case` 的 task 失敗時，整個 case 轉 `cancelled`，所有未完成 task 一併取消，佇列中相關工作清除
 - `ready → running`：有 `task_api` 者由 worker 觸發；無者由使用者手動完成時直接 `ready → done`
 - **手動完成永遠可用**（除非 `allow_manual_override = false`）。若 task 正在 `running`，手動完成會中止等待、將對應的 `task_runs` 標為 `cancelled`，並移除佇列中的輪詢工作。
@@ -1312,7 +1274,7 @@ RETURNING *;
 | `timeout_check` | 檢查 `task_runs.started_at` 是否超過 `api_timeout_s`；是則標記 `timeout` 並依重試策略處理 |
 | `recalc` | 執行 forward pass（用於定期重算與延遲重算） |
 | `deadline_scan` | 掃描逾期預警、**逾期未開始**與逾期未完成，產生通知（§6.6） |
-| `schedule_scan` | 掃描 `template_schedules`，建立到期的週期性 case（§4.16） |
+| `schedule_scan` | 掃描 `template_schedules`，建立到期的週期性 case（§4.15） |
 
 **鎖逾時回收**：`locked_at` 超過 5 分鐘仍未完成的項目視為 worker 崩潰，由清理工作解鎖重新入列。
 
@@ -1442,7 +1404,7 @@ DELETE /templates/{name}/draft             捨棄草稿
 GET    /templates/{name}/health            模板健檢報表（見 8.6）
 GET    /templates/{name}/export            匯出 YAML（見 8.7）
 POST   /templates/import                   匯入 YAML
-GET    /templates/{name}/schedule          週期建立設定（§4.16）
+GET    /templates/{name}/schedule          週期建立設定（§4.15）
 PUT    /templates/{name}/schedule
 DELETE /templates/{name}/schedule
 POST   /templates/{name}/schedule/run-now  立即依排程設定建立一個 case
@@ -1527,7 +1489,7 @@ POST /api/v1/cases
 服務層流程：
 
 1. 載入指定版本模板；驗證參數符合 `template_para` schema，且所有 `required: true` 的角色皆已指派
-2. 執行 §4.15 的建立期展開管線步驟 1–9（`when` 過濾、`for_each` 展開、運算式求值、依賴與 owner 解析、圖驗證）
+2. 執行 §4.14 的建立期展開管線（`when` 過濾、運算式求值、依賴與 owner 解析、圖驗證）
 3. 建立自我包含的快照（§4.8），並記錄 `role_assignments` 與 `skipped_tasks`
 4. 建立 `case_tasks` 與 `task_dependencies`（含 `lag_seconds`）
 5. 執行 backward pass 寫入 `baseline_*`
@@ -1549,8 +1511,8 @@ POST /api/v1/cases
       "baseline_start": "2026-08-14T06:00:00+08:00",
       "baseline_end":   "2026-08-14T18:00:00+08:00",
       "owner": "王小明", "group": "研發部", "is_on_critical_path": true },
-    { "name": "batch_test_0", "display_name": "第 1 批測試", "phase": "測試階段",
-      "for_each_group": "batch_test", "for_each_index": 0, "...": "..." }
+    { "name": "functional_test", "display_name": "功能測試", "phase": "測試階段",
+      "...": "..." }
   ],
   "dependencies": [ { "from": "my_task1", "to": "batch_test_0", "lag_seconds": 14400 } ],
   "skipped_tasks": [
@@ -1835,12 +1797,10 @@ Case 總表的 `q` 參數搜尋三個範圍，以 PostgreSQL 全文檢索實作�
 - **使用者原始範例的 YAML 可原封不動解析成功**（回歸保護）；正式名稱與舊別名兩種寫法產生完全相同的內部結構
 - §4.7 每個錯誤碼與警告碼各一筆測資
 - 運算式求值器的白名單測試：確認 `__import__`、屬性存取、下標、推導式等被拒絕
-- **展開管線**（§4.15）：以「同一模板 × 多組參數 → 期望的節點集合與邊集合」為測資形式
+- **展開管線**（§4.14）：以「同一模板 × 多組參數 → 期望的節點集合與邊集合」為測資形式
   - `when` 為 false 時的 bypass 接回，含連續多個節點被略過的遞移情形
   - 被略過節點兩側的 lag 正確相加
-  - `for_each` 展開 0 / 1 / N 個實例；`sequential: true` 串成鏈
-  - 引用展開組的匯流依賴展開為 N 條邊
-  - `when` 與 `for_each` 併用時的求值順序
+  - 菱形分支中略過一側後，另一側與匯流點的依賴仍然正確
   - `owner` 五種寫法的解析，含 `same_as` 鏈式引用與循環偵測
   - 展開結果的決定性：同一組輸入重複執行產生完全相同的圖
 
@@ -1902,7 +1862,7 @@ services:
 
 | 階段 | 內容 | 產出 |
 |---|---|---|
-| **1. 基礎與 DSL** | 資料模型、Alembic 遷移、DSL 解析與驗證器、別名相容層、受限運算式求值器、展開管線（`when` / `for_each` / owner 解析）、認證與權限 | 可用 CLI 對一份模板 YAML 加一組參數印出展開後的節點與邊 |
+| **1. 基礎與 DSL** | 資料模型、Alembic 遷移、DSL 解析與驗證器、別名相容層、受限運算式求值器、展開管線（`when` / owner 解析）、認證與權限 | 可用 CLI 對一份模板 YAML 加一組參數印出展開後的節點與邊 |
 | **2. 排程引擎** | Calendar 兩種實作、backward/forward pass（含 lag 與緩衝）、拓撲排序、critical path、加權進度、緩衝消耗健康度、黃金測資 | 引擎單元測試全綠，可手算驗證 |
 | **3. Case 核心 API** | 建立 case（含角色指派與冪等鍵）、快照、預覽 API、case 列表與搜尋、task 編輯、手動完成、`on_failure` 結算規則、baseline 邊界情形 | Postman/curl 可跑完整流程 |
 | **4. Gantt 視覺化** | React 骨架、Gantt 渲染層（含緩衝區塊與單軌計畫外任務）、Case 總表、Case 詳情、建立精靈、我的任務 | 使用者可完整操作「建立 → 檢視 → 手動完成」 |
@@ -1925,7 +1885,7 @@ services:
 | `requirement` 語義 | AND（全部完成） | 加 `requirement_mode: any` |
 | Task 間資料流 | 無；task 之間不傳遞執行結果 | task 模板宣告 `outputs`，下游以 `${ tasks.x.outputs.y }` 執行期引用；手動完成的對話框依 outputs schema 生成結構化表單 |
 | 中間時間錨點 | 只有末端一個 `target_date` | `type: milestone` + 節點層級 `deadline`，backward pass 改為 `end = min(後繼 start, 自身 deadline, target_date)`；需同時處理「錨點互相衝突」的驗證與提示 |
-| `for_each` 配對依賴 | 只支援全體匯流 | 兩個同基數的展開組「第 i 對第 i」逐一配對 |
+| 同型任務展開 | 不支援；平行的同型步驟逐一寫出 | 若日後出現「同一步驟要跑 N 份」的流程，再評估 `for_each` 之類的展開語法 |
 | 執行期分支 | `when` 僅建立期求值；返工類需求以 optional + 手動啟用替代 | 需要重新定義 baseline 的語義才能支援 |
 | 模板組合 | 不支援 `extends` 與子流程巢狀 | 名稱空間、跨層依賴、快照展開策略都需先想清楚 |
 | 資源衝突 | 不檢查（同一人可同時被排多個 task） | 資源負載視圖與衝突警示；模板健檢（§8.6）累積的資料可用來判斷是否真的需要 |

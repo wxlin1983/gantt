@@ -10,8 +10,6 @@ Namespaces:
 ``para.*``   parameters supplied by the user
 ``case.*``   ``case.name`` / ``case.target_date`` / ``case.created_at``
 ``role.*``   usernames bound to template roles at case creation
-``item``     current element, only inside a ``for_each`` node
-``index``    0-based index, only inside a ``for_each`` node
 ===========  =========================================================
 
 `para` / `case` / `role` are syntactically attribute access
@@ -31,15 +29,15 @@ from typing import Any
 from .errors import DslError
 
 # A string that is exactly one expression yields a native value, so that
-# for_each receives a list and when receives a bool.
+# `when` receives a real bool rather than the text "False".
 _FULL_EXPR = re.compile(r"^\s*\{\{(.+?)\}\}\s*$", re.DOTALL)
 _EMBEDDED = re.compile(r"\{\{(.+?)\}\}", re.DOTALL)
 
 NAMESPACES = frozenset({"para", "case", "role"})
-LOOP_NAMES = frozenset({"item", "index"})
 
-#: Cap for range() and sequence repetition, so that an expression like
-#: range(10**9) cannot exhaust memory during expansion.
+#: Cap on sequence repetition. Pow is blocked, so a huge count has to be
+#: written as a literal, but `'x' * 999999999` is still cheap to type and
+#: expensive to evaluate.
 MAX_SEQUENCE_SIZE = 1000
 
 _ALLOWED_FUNCS: dict[str, Any] = {
@@ -50,7 +48,6 @@ _ALLOWED_FUNCS: dict[str, Any] = {
     "max": max,
     "min": min,
     "len": len,
-    "range": range,
 }
 
 # Pow is deliberately excluded: the spec lists only the four arithmetic
@@ -75,9 +72,6 @@ _CMP_OPS: dict[type[ast.cmpop], Any] = {
     ast.NotIn: lambda a, b: a not in b,
 }
 
-_MISSING = object()
-
-
 @dataclass(slots=True)
 class EvalContext:
     """Namespaces visible during evaluation."""
@@ -85,15 +79,6 @@ class EvalContext:
     para: dict[str, Any] = field(default_factory=dict)
     case: dict[str, Any] = field(default_factory=dict)
     role: dict[str, Any] = field(default_factory=dict)
-    item: Any = _MISSING
-    index: Any = _MISSING
-
-    def with_loop(self, item: Any, index: int) -> EvalContext:
-        return EvalContext(self.para, self.case, self.role, item, index)
-
-    @property
-    def in_loop(self) -> bool:
-        return self.index is not _MISSING
 
 
 class _Evaluator(ast.NodeVisitor):
@@ -120,14 +105,6 @@ class _Evaluator(ast.NodeVisitor):
 
     def visit_Name(self, node: ast.Name):
         name = node.id
-        if name in LOOP_NAMES:
-            value = getattr(self.ctx, name)
-            if value is _MISSING:
-                raise self._fail(
-                    "E_BAD_EXPRESSION",
-                    f"`{name}` is only available inside a for_each node",
-                )
-            return value
         if name in NAMESPACES:
             raise self._fail(
                 "E_BAD_EXPRESSION",
@@ -257,29 +234,12 @@ class _Evaluator(ast.NodeVisitor):
                 "E_BAD_EXPRESSION", "keyword arguments are not supported"
             )
         args = [self.visit(arg) for arg in node.args]
-        if func is range:
-            return self._safe_range(args)
         try:
             return func(*args)
         except (TypeError, ValueError) as exc:
             raise self._fail(
                 "E_BAD_EXPRESSION", f"{node.func.id}() failed: {exc}"
             ) from exc
-
-    def _safe_range(self, args: list[Any]) -> list[int]:
-        try:
-            values = range(*args)
-        except (TypeError, ValueError) as exc:
-            raise self._fail(
-                "E_BAD_EXPRESSION", f"range() failed: {exc}"
-            ) from exc
-        if len(values) > MAX_SEQUENCE_SIZE:
-            raise self._fail(
-                "E_BAD_EXPRESSION",
-                f"range() yields {len(values)} elements, over the "
-                f"{MAX_SEQUENCE_SIZE} cap",
-            )
-        return list(values)
 
     def visit_List(self, node: ast.List):
         return [self.visit(element) for element in node.elts]
@@ -305,7 +265,7 @@ def render(value: Any, ctx: EvalContext, path: str = "") -> Any:
     """Expand ``{{ }}`` inside a string.
 
     A string that is exactly one expression returns a **native value**
-    (``"{{ range(3) }}"`` -> ``[0, 1, 2]``); otherwise the expressions are
+    (``"{{ para.flag }}"`` -> ``True``); otherwise the expressions are
     interpolated into text (``"batch {{ index + 1 }}"`` -> ``"batch 1"``).
     Non-string values pass through untouched.
     """

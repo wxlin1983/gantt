@@ -1,10 +1,11 @@
 """initial schema
 
-Revision ID: a7475749c243
+Revision ID: 7248f2f42969
 Revises: 
-Create Date: 2026-07-29 22:21:14.667681
+Create Date: 2026-07-30 07:16:43.008163
 
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -13,7 +14,7 @@ from alembic import op
 from app.models.base import JSONType
 
 # revision identifiers, used by Alembic.
-revision: str = 'a7475749c243'
+revision: str = '7248f2f42969'
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -157,8 +158,6 @@ def upgrade() -> None:
     sa.Column('display_name', sa.String(length=256), nullable=False),
     sa.Column('source_task_template', sa.String(length=64), nullable=True),
     sa.Column('phase', sa.String(length=128), nullable=False),
-    sa.Column('for_each_group', sa.String(length=128), nullable=True),
-    sa.Column('for_each_index', sa.Integer(), nullable=True),
     sa.Column('duration_seconds', sa.Integer(), nullable=False),
     sa.Column('schedule_mode', sa.String(length=16), nullable=False),
     sa.Column('calendar_id', sa.Integer(), nullable=True),

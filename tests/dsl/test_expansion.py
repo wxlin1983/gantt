@@ -109,130 +109,40 @@ class TestConditionalTasks:
         assert "E_ALL_TASKS_SKIPPED" in codes(exc.value)
 
 
-class TestForEach:
+class TestParallelBranches:
+    """Fan-out and fan-in, which is what a real flow uses instead of
+    expansion: two independent branches that join at a later task."""
+
     @pytest.fixture
     def flow(self):
         return [
             {"id": "a", "duration": "1H"},
-            {
-                "id": "batch",
-                "duration": "1H",
-                "for_each": "{{ range(para.n) }}",
-                "label": "batch {{ index + 1 }}",
-                "requirement": "a",
-            },
-            {"id": "z", "duration": "1H", "requirement": "batch"},
+            {"id": "left", "duration": "2H", "requirement": "a"},
+            {"id": "right", "duration": "4H", "requirement": "a"},
+            {"id": "z", "duration": "1H", "requirement": ["left", "right"]},
         ]
 
-    @pytest.fixture
-    def template_para(self):
-        return [{"para_name": "n", "para_type": "int", "para_default": 1}]
-
-    def test_expands_into_parallel_instances(
-        self, flow, template_para, task_templates
-    ):
-        result = run(
-            flow, task_templates, {"n": 3}, template_para=template_para
-        )
-        assert ids_of(result) == ["a", "batch_0", "batch_1", "batch_2", "z"]
-        assert [t.label for t in result.tasks if t.for_each_group] == [
-            "batch 1",
-            "batch 2",
-            "batch 3",
-        ]
-        # Fan out from a, fan in to z: depending on the group means all of it
-        assert edges_of(result) == {
-            ("a", "batch_0", 0),
-            ("a", "batch_1", 0),
-            ("a", "batch_2", 0),
-            ("batch_0", "z", 0),
-            ("batch_1", "z", 0),
-            ("batch_2", "z", 0),
-        }
-
-    def test_single_instance(self, flow, template_para, task_templates):
-        result = run(
-            flow, task_templates, {"n": 1}, template_para=template_para
-        )
-        assert ids_of(result) == ["a", "batch_0", "z"]
-
-    def test_zero_instances_behaves_like_a_skipped_node(
-        self, flow, template_para, task_templates
-    ):
-        result = run(
-            flow, task_templates, {"n": 0}, template_para=template_para
-        )
-        assert ids_of(result) == ["a", "z"]
-        assert edges_of(result) == {("a", "z", 0)}
-        assert [s.id for s in result.skipped] == ["batch"]
-
-    def test_sequential_chains_instances(self, template_para, task_templates):
-        flow = [
-            {
-                "id": "batch",
-                "duration": "1H",
-                "for_each": "{{ range(para.n) }}",
-                "sequential": True,
-            }
-        ]
-        result = run(
-            flow, task_templates, {"n": 3}, template_para=template_para
-        )
-        assert edges_of(result) == {
-            ("batch_0", "batch_1", 0),
-            ("batch_1", "batch_2", 0),
-        }
-
-    def test_custom_id_suffix(self, task_templates):
-        flow = [
-            {
-                "id": "check",
-                "duration": "1H",
-                "for_each": "{{ ['x', 'y'] }}",
-                "id_suffix": "{{ item }}",
-            }
-        ]
+    def test_diamond(self, flow, task_templates):
         result = run(flow, task_templates)
-        assert ids_of(result) == ["check_x", "check_y"]
+        assert ids_of(result) == ["a", "left", "right", "z"]
+        assert edges_of(result) == {
+            ("a", "left", 0),
+            ("a", "right", 0),
+            ("left", "z", 0),
+            ("right", "z", 0),
+        }
 
-    def test_colliding_suffix_is_rejected(self, task_templates):
-        flow = [
-            {
-                "id": "check",
-                "duration": "1H",
-                "for_each": "{{ range(2) }}",
-                "id_suffix": "same",
-            }
-        ]
-        with pytest.raises(DslError) as exc:
-            run(flow, task_templates)
-        assert "E_DUP_EXPANDED_ID" in codes(exc.value)
-
-    def test_non_sequence_is_rejected(self, task_templates):
-        flow = [{"id": "a", "duration": "1H", "for_each": "{{ para.n }}"}]
-        template_para = [
-            {"para_name": "n", "para_type": "int", "para_default": 3}
-        ]
-        with pytest.raises(DslError) as exc:
-            run(flow, task_templates, template_para=template_para)
-        assert "E_BAD_FOR_EACH" in codes(exc.value)
-
-    def test_when_is_evaluated_before_for_each(
-        self, template_para, task_templates
-    ):
-        flow = [
-            {
-                "id": "batch",
-                "duration": "1H",
-                "when": "{{ False }}",
-                "for_each": "{{ range(para.n) }}",
-            },
-            {"id": "z", "duration": "1H"},
-        ]
-        result = run(
-            flow, task_templates, {"n": 5}, template_para=template_para
-        )
-        assert ids_of(result) == ["z"]
+    def test_skipping_one_branch_rewires_it_away(self, flow, task_templates):
+        flow[1] = {**flow[1], "when": "{{ False }}"}
+        result = run(flow, task_templates)
+        assert ids_of(result) == ["a", "right", "z"]
+        # z keeps its dependency on the surviving branch, and picks up a
+        # direct edge from a in place of the removed one
+        assert edges_of(result) == {
+            ("a", "right", 0),
+            ("right", "z", 0),
+            ("a", "z", 0),
+        }
 
 
 class TestOwnerResolution:
@@ -396,13 +306,9 @@ class TestDeterminism:
     def test_same_input_yields_the_same_graph(self, task_templates):
         flow = [
             {"id": "a", "duration": "1H"},
-            {
-                "id": "batch",
-                "duration": "1H",
-                "for_each": "{{ range(4) }}",
-                "requirement": "a",
-            },
-            {"id": "z", "duration": "1H", "requirement": "batch"},
+            {"id": "b", "duration": "1H", "requirement": "a"},
+            {"id": "c", "duration": "1H", "requirement": "a"},
+            {"id": "z", "duration": "1H", "requirement": ["b", "c"]},
         ]
         first = run(flow, task_templates)
         second = run(flow, task_templates)
