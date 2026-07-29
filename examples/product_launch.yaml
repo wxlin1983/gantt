@@ -1,0 +1,85 @@
+# Exercises the full DSL: roles, phases, conditional tasks, for_each
+# expansion, lag, buffer and failure policy.
+gantt:
+  template_name: product_launch
+  dsl_version: 1
+  version: 3
+  description: New product introduction flow
+  buffer: 8H
+
+  roles:
+    - name: pm
+      display_name: Project manager
+      required: true
+    - name: qa_lead
+      display_name: QA lead
+      default_group: qa
+
+  template_para:
+    - para_name: batch_count
+      para_type: int
+      para_default: 1
+      group: Capacity
+      description: Number of parallel test batches
+      validation:
+        min: 1
+        max: 10
+    - para_name: line_type
+      para_type: enum
+      choices: [A, B, C]
+      para_default: A
+    - para_name: product_code
+      para_type: str
+      para_default: TEST
+
+  flow:
+    - phase: Preparation
+      default_owner: { role: pm }
+      tasks:
+        - id: requirements
+          uses: tt_review
+          label: Requirements sign-off
+          group: rnd
+          requirement: none
+          duration: 12H
+
+    - phase: Testing
+      tasks:
+        - id: batch_test
+          uses: tt_test
+          for_each: "{{ range(para.batch_count) }}"
+          label: "Batch {{ index + 1 }} test ({{ para.product_code }})"
+          owner: { role: qa_lead }
+          group: qa
+          duration: 12H
+          requirement:
+            - task: requirements
+              lag: 4H
+          schedule_mode: business
+          calendar: taiwan_office
+
+        - id: safety_review
+          uses: tt_review
+          label: Safety review
+          when: "{{ para.line_type == 'A' }}"
+          owner: { group_lead: qa }
+          requirement: requirements
+          duration: 6H
+
+    - phase: Closing
+      tasks:
+        - id: report
+          uses: tt_review
+          label: Closing report
+          owner: { same_as: requirements }
+          group: rnd
+          duration: 12H
+          requirement: [batch_test, safety_review]
+
+        - id: notify
+          uses: tt_notify
+          label: Notify stakeholders
+          requirement: report
+          duration: 10M
+          on_failure: continue
+          optional: true

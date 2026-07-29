@@ -1,0 +1,53 @@
+[project]
+name = "gantt"
+version = "0.1.0"
+description = "Template-driven gantt workflow system"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.14",
+    "argon2-cffi>=23.1",
+    "asyncpg>=0.30",
+    "fastapi>=0.115",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.14.2",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0.36",
+    "typer>=0.15",
+]
+
+[project.scripts]
+gantt = "app.cli:app"
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.20",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 79
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic renders these; reformatting them by hand only creates churn on the
+# next autogenerate.
+"migrations/versions/*" = ["E501"]
+# Typer expresses "repeatable option" as a list default, which is safe here
+# because the values are only read.
+"app/cli.py" = ["B006"]

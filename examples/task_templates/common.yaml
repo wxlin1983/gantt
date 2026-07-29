@@ -1,0 +1,28 @@
+task:
+  id: tt_review
+  label: Review step
+  default_duration: 8H
+  schedule_mode: business
+  calendar: taiwan_office
+  warn_before: 2H
+---
+task:
+  id: tt_test
+  label: Test run
+  default_duration: 10H
+  task_para:
+    - para_name: rig
+      para_type: str
+      para_default: default
+  task_api: http_request
+  api_mode: trigger_poll
+  api_timeout: 30M
+  api_retry_max: 3
+---
+task:
+  id: tt_notify
+  label: Send notification
+  default_duration: 10M
+  task_api: http_request
+  api_mode: trigger_poll
+  on_failure: continue

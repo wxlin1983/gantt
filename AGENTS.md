@@ -28,6 +28,12 @@
 - `uv.lock` 與 `web/pnpm-lock.yaml` **要進版控**。
 - 直接改 `pyproject.toml` / `package.json` 的相依區塊後，記得跑 `uv lock` / `pnpm install` 讓 lockfile 同步。
 
+## 程式碼慣例
+
+- **所有註解與 docstring 一律用英文**，設計文件維持中文。
+- 行寬 79（`ruff` 設定，與編輯器的 linter 一致）。提交前跑 `uv run ruff format` 與 `uv run ruff check`。
+- 註解寫「為什麼」而非「做什麼」；規格相關的決定要標出 implement.md 的章節（如 `§4.15`）。
+
 ## 技術棧
 
 後端 FastAPI + SQLAlchemy 2.0 (async) + PostgreSQL 15+ / Alembic / pytest。
@@ -38,33 +44,39 @@
 ## 目錄配置
 
 ```
-app/            後端；api 與 worker 共用同一份程式碼，只是進入點不同
-  scheduling/   排程引擎（純函式，不碰 DB）
-  execution/    task 執行引擎與 handler registry
-  handlers/     task_api 的處理函式，啟動時自動掃描註冊
-web/            前端（package.json 與 pnpm-lock.yaml 放這裡）
-  src/
+app/
+  dsl/          模板語言：schema(pydantic)、loader、expressions、graph、expansion
+  models/       SQLAlchemy 資料表
+  auth/         密碼雜湊與授權規則（純函式）
+  cli.py        gantt expand / gantt validate
+  config.py     設定；db.py 連線與 session
+  scheduling/   排程引擎（純函式，不碰 DB）      ← 階段 2
+  execution/    task 執行引擎與 handler registry ← 階段 5
 migrations/     Alembic
+examples/       可直接跑的範例模板
+tests/          對應 app/ 的結構
+web/            前端（package.json 與 pnpm-lock.yaml 放這裡）← 階段 4
 ```
 
 ## 常用指令
 
-專案尚未 scaffold，以下為建立後的預期指令：
-
 ```bash
-uv sync                                      # 安裝後端相依
-uv run uvicorn app.main:app --reload         # 啟動 API
-uv run python -m app.worker                  # 啟動 worker
-uv run pytest                                # 後端測試
+uv sync                                      # 安裝相依
+uv run pytest                                # 測試
+uv run ruff format app/ tests/ && uv run ruff check app/ tests/
+
+# 展開模板看結果（不需要資料庫）
+uv run gantt expand examples/product_launch.yaml \
+  -t examples/task_templates -p batch_count=3 -r pm=alice -r qa_lead=bob
+uv run gantt validate examples/product_launch.yaml -t examples/task_templates
+
 uv run alembic upgrade head                  # 套用遷移
 uv run alembic revision --autogenerate -m "" # 產生遷移
-
-cd web
-pnpm install
-pnpm dev                                     # 前端開發伺服器
-pnpm test                                    # Vitest
-pnpm build
 ```
+
+`DATABASE_URL` 預設指向 PostgreSQL。沒有 Postgres 時可用
+`DATABASE_URL="sqlite+aiosqlite:///dev.db"` 跑遷移——模型的 JSON 欄位與部分索引
+都有 SQLite variant。
 
 ## 注意事項
 
