@@ -396,6 +396,62 @@ def validate(
         )
 
 
+@app.command("seed")
+def seed_command(
+    admin_username: Annotated[
+        str, typer.Option("--admin", help="Username for the first admin")
+    ] = "admin",
+    admin_email: Annotated[str, typer.Option("--email")] = "",
+    password: Annotated[
+        str,
+        typer.Option(
+            "--password",
+            prompt=True,
+            hide_input=True,
+            confirmation_prompt=True,
+            help="Password for the first admin",
+        ),
+    ] = "",
+) -> None:
+    """Prepare an empty database: builtin calendars and the first admin.
+
+    Idempotent, so it is safe to run against a database that has already been
+    seeded -- existing rows are left alone.
+    """
+    import asyncio
+
+    from app.auth.passwords import hash_password
+    from app.db import session_scope
+    from app.models import User
+    from app.services import calendars as calendar_service
+
+    async def run() -> str:
+        from sqlalchemy import select
+
+        async with session_scope() as session:
+            await calendar_service.ensure_builtins(session)
+            existing = (
+                await session.scalars(
+                    select(User).where(User.username == admin_username)
+                )
+            ).first()
+            if existing is not None:
+                return f"admin {admin_username!r} already exists"
+            session.add(
+                User(
+                    username=admin_username,
+                    display_name=admin_username.title(),
+                    email=admin_email or f"{admin_username}@example.invalid",
+                    password_hash=hash_password(password),
+                    is_template_admin=True,
+                )
+            )
+            return f"created admin {admin_username!r}"
+
+    console.print(f"[green]OK[/] {asyncio.run(run())}")
+    console.print("Builtin calendars: continuous, taiwan_office")
+
+
 def main() -> None:
     sys.exit(app())
 

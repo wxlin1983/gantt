@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config import get_settings
 from app.models import Base
+from app.models.base import UtcDateTime
 
 config = context.config
 
@@ -32,14 +33,22 @@ target_metadata = Base.metadata
 
 
 def render_item(type_, obj, autogen_context) -> str | bool:
-    """Render our JSON column type by name.
+    """Render our shared column types by name.
 
-    Alembic would otherwise emit
-    ``postgresql.JSONB(astext_type=Text()).with_variant(...)`` and leave
-    ``Text`` unimported, producing a migration that fails at import time.
-    Naming the shared type also keeps the dialect variants in one place.
+    Left to itself, Alembic emits the fully qualified constructor --
+    ``postgresql.JSONB(astext_type=Text())`` or
+    ``app.models.base.UtcDateTime(...)`` -- without importing what those names
+    need, producing a migration that fails at import time. Naming the shared
+    types also keeps their dialect variants in one place.
     """
-    if type_ == "type" and isinstance(obj, JSONB):
+    if type_ != "type":
+        return False
+    if isinstance(obj, UtcDateTime):
+        autogen_context.imports.add(
+            "from app.models.base import TZDateTime"
+        )
+        return "TZDateTime"
+    if isinstance(obj, JSONB):
         autogen_context.imports.add("from app.models.base import JSONType")
         return "JSONType"
     return False

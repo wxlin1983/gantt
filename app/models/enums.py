@@ -49,16 +49,22 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
-    def is_settled(self, on_failure: FailurePolicy) -> bool:
+    def is_settled(self, on_failure: FailurePolicy | str) -> bool:
         """Whether downstream tasks may proceed (implement.md §4.13).
 
         The gate is "settled", not "done": a cancelled task, or a failed one
         whose policy is `continue`, also releases its successors.
+
+        Compared by value rather than identity on purpose. These are
+        ``StrEnum``, so a caller passing a plain ``"continue"`` -- out of JSON,
+        out of a fixture, out of a column that lost its type -- still gets the
+        right answer instead of silently taking the blocking branch.
         """
         if self in (TaskStatus.DONE, TaskStatus.CANCELLED):
             return True
         return (
-            self is TaskStatus.FAILED and on_failure is FailurePolicy.CONTINUE
+            self == TaskStatus.FAILED
+            and on_failure == FailurePolicy.CONTINUE
         )
 
 

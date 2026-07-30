@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, JSONType, TZDateTime
+from .base import Base, JSONType, TZDateTime, enum_type
 from .enums import (
     ApiMode,
     CaseHealth,
@@ -71,10 +71,10 @@ class GanttCase(Base):
     baseline_resets: Mapped[list[Any]] = mapped_column(JSONType, default=list)
 
     status: Mapped[CaseStatus] = mapped_column(
-        String(16), default=CaseStatus.ACTIVE
+        enum_type(CaseStatus), default=CaseStatus.ACTIVE
     )
     forecast_end: Mapped[datetime | None] = mapped_column(TZDateTime)
-    health: Mapped[CaseHealth | None] = mapped_column(String(16))
+    health: Mapped[CaseHealth | None] = mapped_column(enum_type(CaseHealth))
     buffer_consumed_ratio: Mapped[float | None] = mapped_column(Numeric(5, 4))
     progress_ratio: Mapped[float | None] = mapped_column(Numeric(5, 4))
 
@@ -123,7 +123,7 @@ class CaseTask(Base):
 
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
     schedule_mode: Mapped[ScheduleMode] = mapped_column(
-        String(16), default=ScheduleMode.CONTINUOUS
+        enum_type(ScheduleMode), default=ScheduleMode.CONTINUOUS
     )
     calendar_id: Mapped[int | None] = mapped_column(
         ForeignKey("calendars.id", ondelete="SET NULL")
@@ -141,10 +141,10 @@ class CaseTask(Base):
     actual_end: Mapped[datetime | None] = mapped_column(TZDateTime)
 
     status: Mapped[TaskStatus] = mapped_column(
-        String(16), default=TaskStatus.PENDING
+        enum_type(TaskStatus), default=TaskStatus.PENDING
     )
     completion_source: Mapped[CompletionSource | None] = mapped_column(
-        String(16)
+        enum_type(CompletionSource)
     )
     completed_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
@@ -164,12 +164,12 @@ class CaseTask(Base):
     params: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
 
     task_api: Mapped[str | None] = mapped_column(String(128))
-    api_mode: Mapped[ApiMode | None] = mapped_column(String(32))
+    api_mode: Mapped[ApiMode | None] = mapped_column(enum_type(ApiMode))
     api_config: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     allow_manual_override: Mapped[bool] = mapped_column(Boolean, default=True)
 
     on_failure: Mapped[FailurePolicy] = mapped_column(
-        String(16), default=FailurePolicy.BLOCK
+        enum_type(FailurePolicy), default=FailurePolicy.BLOCK
     )
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
     warn_before_seconds: Mapped[int] = mapped_column(Integer, default=7200)
@@ -187,6 +187,11 @@ class CaseTask(Base):
     def is_unplanned(self) -> bool:
         """True for tasks added after the case was created."""
         return self.baseline_start is None
+
+    @property
+    def is_settled(self) -> bool:
+        """Whether successors may proceed past this task (§4.12)."""
+        return self.status.is_settled(self.on_failure)
 
     def __repr__(self) -> str:
         return f"<CaseTask {self.name} {self.status}>"

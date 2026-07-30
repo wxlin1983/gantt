@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import Base, JSONType, TZDateTime
+from .base import Base, JSONType, TZDateTime, enum_type
 from .enums import JobType, RunStatus
 
 
@@ -38,7 +38,7 @@ class TaskRun(Base):
     )
     attempt: Mapped[int] = mapped_column(Integer)
     handler_name: Mapped[str] = mapped_column(String(128))
-    status: Mapped[RunStatus] = mapped_column(String(16))
+    status: Mapped[RunStatus] = mapped_column(enum_type(RunStatus))
     request_payload: Mapped[dict[str, Any]] = mapped_column(
         JSONType, default=dict
     )
@@ -72,7 +72,7 @@ class JobQueue(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    job_type: Mapped[JobType] = mapped_column(String(32))
+    job_type: Mapped[JobType] = mapped_column(enum_type(JobType))
     case_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("case_tasks.id", ondelete="CASCADE")
     )

@@ -21,7 +21,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import Base, JSONType, TimestampMixin, TZDateTime
+from .base import Base, JSONType, TimestampMixin, TZDateTime, enum_type
 from .enums import ApiMode, FailurePolicy, ScheduleMode, TemplateStatus
 
 
@@ -78,7 +78,7 @@ class TaskTemplateRecord(TimestampMixin, Base):
     display_name: Mapped[str] = mapped_column(String(128), default="")
     duration_default: Mapped[str] = mapped_column(String(32), default="0S")
     schedule_mode: Mapped[ScheduleMode] = mapped_column(
-        String(16), default=ScheduleMode.CONTINUOUS
+        enum_type(ScheduleMode), default=ScheduleMode.CONTINUOUS
     )
     calendar_id: Mapped[int | None] = mapped_column(
         ForeignKey("calendars.id", ondelete="SET NULL")
@@ -86,7 +86,7 @@ class TaskTemplateRecord(TimestampMixin, Base):
     para_schema: Mapped[list[Any]] = mapped_column(JSONType, default=list)
 
     task_api: Mapped[str | None] = mapped_column(String(128))
-    api_mode: Mapped[ApiMode | None] = mapped_column(String(32))
+    api_mode: Mapped[ApiMode | None] = mapped_column(enum_type(ApiMode))
     api_config: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     api_timeout_s: Mapped[int] = mapped_column(Integer, default=1800)
     api_retry_max: Mapped[int] = mapped_column(Integer, default=3)
@@ -95,7 +95,7 @@ class TaskTemplateRecord(TimestampMixin, Base):
 
     allow_manual_override: Mapped[bool] = mapped_column(Boolean, default=True)
     on_failure: Mapped[FailurePolicy] = mapped_column(
-        String(16), default=FailurePolicy.BLOCK
+        enum_type(FailurePolicy), default=FailurePolicy.BLOCK
     )
     warn_before_s: Mapped[int] = mapped_column(Integer, default=7200)
     created_by_id: Mapped[int | None] = mapped_column(
@@ -127,7 +127,7 @@ class GanttTemplateRecord(Base):
     name: Mapped[str] = mapped_column(String(128))
     version: Mapped[int] = mapped_column(Integer)
     status: Mapped[TemplateStatus] = mapped_column(
-        String(16), default=TemplateStatus.DRAFT
+        enum_type(TemplateStatus), default=TemplateStatus.DRAFT
     )
     #: The complete DSL document, exactly as validated.
     definition: Mapped[dict[str, Any]] = mapped_column(JSONType)

@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.db
+dev.db
 dist/
 build/
 *.egg-info/

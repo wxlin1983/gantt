@@ -48,7 +48,9 @@ app/
   dsl/          模板語言：schema(pydantic)、loader、expressions、graph、expansion
   models/       SQLAlchemy 資料表
   auth/         密碼雜湊與授權規則（純函式）
-  cli.py        gantt expand / schedule / validate
+  services/     業務邏輯：cases / preview / snapshot / calendars / identity
+  api/          FastAPI：routers、schemas、deps、統一錯誤格式
+  cli.py        gantt expand / schedule / validate / seed
   config.py     設定；db.py 連線與 session
   scheduling/   排程引擎（純函式，不碰 DB）：calendars / passes / analysis
   execution/    task 執行引擎與 handler registry ← 階段 5
@@ -77,6 +79,9 @@ uv run gantt schedule examples/product_launch.yaml \
 
 uv run alembic upgrade head                  # 套用遷移
 uv run alembic revision --autogenerate -m "" # 產生遷移
+uv run gantt seed                            # 建立內建行事曆與第一個管理員
+
+uv run uvicorn app.api.main:app --reload     # 啟動 API（/api/v1/docs 有 Swagger）
 ```
 
 `DATABASE_URL` 預設指向 PostgreSQL。沒有 Postgres 時可用
@@ -91,3 +96,6 @@ uv run alembic revision --autogenerate -m "" # 產生遷移
 - **Case 快照不可變。** `template_snapshot` 沒有任何更新路徑；模板改版不得影響進行中的 case。
 - **Baseline 建立後不再改變**，唯一例外是明確的 reset-baseline 操作。事後插入的任務 baseline 為 NULL。
 - 新增 DSL 欄位時，同時更新 implement.md 的 §4 規格、§4.7 驗證規則、與 §4.15 展開管線的順序。
+- **所有時間欄位一律用 `TZDateTime`**（`UtcDateTime` TypeDecorator）。它會拒絕寫入 naive 值、並保證讀回來一定帶時區——PostgreSQL 的 TIMESTAMPTZ 本來就會，SQLite 不會，排程引擎則完全不接受 naive。
+- **enum 欄位一律用 `enum_type(...)`** 而非 `String`。用 `String` 時值會以純字串讀回，任何 `is SomeEnum.MEMBER` 比較都會無聲失敗（不是報錯，是靜靜走錯分支）。
+- 每個會改動日期的操作都要走「鎖定 case → 套用變更 → 全量重算 → 寫稽核」這個形狀，見 `app/services/cases.py`。

@@ -8,6 +8,7 @@ dependencies = [
     "argon2-cffi>=23.1",
     "asyncpg>=0.30",
     "fastapi>=0.115",
+    "itsdangerous>=2.2.0",
     "pydantic>=2.10",
     "pydantic-settings>=2.14.2",
     "pyyaml>=6.0",
@@ -21,9 +22,11 @@ gantt = "app.cli:app"
 [dependency-groups]
 dev = [
     "aiosqlite>=0.20",
+    "httpx>=0.28.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "ruff>=0.9",
+    "uvicorn>=0.52.0",
 ]
 
 [build-system]
@@ -47,7 +50,9 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
 # Alembic renders these; reformatting them by hand only creates churn on the
 # next autogenerate.
-"migrations/versions/*" = ["E501"]
+# Alembic renders the import block one line per name; combining them is
+# cosmetic and gets undone on the next autogenerate.
+"migrations/versions/*" = ["E501", "I001"]
 # Typer expresses "repeatable option" as a list default, which is safe here
 # because the values are only read.
 "app/cli.py" = ["B006"]
