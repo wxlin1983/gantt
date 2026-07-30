@@ -396,6 +396,97 @@ def validate(
         )
 
 
+@app.command("import")
+def import_command(
+    template_path: Annotated[
+        Path,
+        typer.Argument(
+            exists=True, dir_okay=False, help="Gantt template YAML"
+        ),
+    ],
+    tasks: Annotated[
+        list[Path],
+        typer.Option(
+            "--tasks",
+            "-t",
+            exists=True,
+            help="Task template file or directory (repeatable)",
+        ),
+    ] = [],
+    publish: Annotated[
+        bool,
+        typer.Option(
+            "--publish", help="Publish immediately instead of leaving a draft"
+        ),
+    ] = False,
+) -> None:
+    """Load a template into the database, creating any task templates it needs.
+
+    Imports land as a draft by default so they can be reviewed; `--publish`
+    is the shortcut for setting up a fresh installation.
+    """
+    import asyncio
+
+    import yaml as yaml_module
+
+    from app.db import session_scope
+    from app.services import templates as template_service
+
+    gantt = yaml_module.safe_load(template_path.read_text())
+    document = {"gantt": gantt.get("gantt", gantt)}
+
+    task_documents: list[dict] = []
+    for path in tasks:
+        files = (
+            sorted(path.glob("*.yaml")) + sorted(path.glob("*.yml"))
+            if path.is_dir()
+            else [path]
+        )
+        for file in files:
+            for entry in yaml_module.safe_load_all(file.read_text()):
+                if entry:
+                    task_documents.append(entry.get("task", entry))
+    if task_documents:
+        document["task_templates"] = task_documents
+
+    async def run() -> str:
+        async with session_scope() as session:
+            report = await template_service.import_document(
+                session, yaml_module.safe_dump(document)
+            )
+            lines = [
+                f"imported {report.template_name} as draft "
+                f"v{report.draft_version}"
+            ]
+            if report.task_templates_created:
+                lines.append(
+                    "created task templates: "
+                    + ", ".join(report.task_templates_created)
+                )
+            if report.task_templates_differing:
+                lines.append(
+                    "left existing task templates alone (they differ): "
+                    + ", ".join(report.task_templates_differing)
+                )
+            if report.missing_credentials:
+                lines.append(
+                    "credentials still to configure: "
+                    + ", ".join(report.missing_credentials)
+                )
+            if publish:
+                published = await template_service.publish(
+                    session, report.template_name, "imported via CLI"
+                )
+                lines.append(f"published v{published.version}")
+            return "\n  ".join(lines)
+
+    try:
+        console.print(f"[green]OK[/] {asyncio.run(run())}")
+    except DslError as exc:
+        _report(exc.issues, "Import failed")
+        raise typer.Exit(1) from exc
+
+
 @app.command("seed")
 def seed_command(
     admin_username: Annotated[
