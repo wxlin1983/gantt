@@ -543,6 +543,55 @@ def seed_command(
     console.print("Builtin calendars: continuous, taiwan_office")
 
 
+@app.command("passwd")
+def passwd_command(
+    username: Annotated[
+        str, typer.Argument(help="Account to set a new password for")
+    ],
+    password: Annotated[
+        str,
+        typer.Option(
+            "--password",
+            prompt=True,
+            hide_input=True,
+            confirmation_prompt=True,
+            help="The new password",
+        ),
+    ] = "",
+) -> None:
+    """Set an account's password.
+
+    Passwords are stored as argon2id hashes and cannot be read back, so a
+    forgotten one can only be replaced. This is the only way to do that
+    without editing the database by hand.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.auth.passwords import hash_password
+    from app.db import session_scope
+    from app.models import User
+
+    async def run() -> str:
+        async with session_scope() as session:
+            user = (
+                await session.scalars(
+                    select(User).where(User.username == username)
+                )
+            ).one_or_none()
+            if user is None:
+                raise LookupError(username)
+            user.password_hash = hash_password(password)
+            return f"password updated for {username!r}"
+
+    try:
+        console.print(f"[green]OK[/] {asyncio.run(run())}")
+    except LookupError:
+        errors.print(f"[red]No account named {username!r}[/]")
+        raise typer.Exit(1) from None
+
+
 def main() -> None:
     sys.exit(app())
 

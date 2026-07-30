@@ -47,6 +47,12 @@ docker compose exec api gantt import examples/product_launch.yaml \
 
 打開 http://localhost:8080 ，用第 3 步建立的帳號登入。
 
+忘記密碼的話：密碼以 argon2id 雜湊儲存，讀不回來，只能改掉。
+
+```bash
+docker compose exec api gantt passwd admin
+```
+
 ```bash
 docker compose ps                       # 各服務狀態
 docker compose logs -f worker           # 看自動化任務被觸發
@@ -199,7 +205,7 @@ app/
   api/           FastAPI：routers、schemas、deps、統一錯誤格式
   models/        SQLAlchemy 資料表
   auth/          密碼雜湊與授權規則（純函式）
-  cli.py         gantt expand / schedule / validate / import / seed
+  cli.py         gantt expand / schedule / validate / import / seed / passwd
 migrations/      Alembic
 examples/        可直接跑的範例模板
 tests/           對應 app/ 的結構

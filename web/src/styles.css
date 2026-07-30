@@ -824,3 +824,13 @@ code {
     transition: none !important;
   }
 }
+
+/* Two controls that read as one field, e.g. the target date and its time. */
+.field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.field-row input[type="date"] {
+  flex: 1;
+}

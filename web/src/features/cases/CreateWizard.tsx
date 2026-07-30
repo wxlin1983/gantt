@@ -18,6 +18,9 @@ import {
   formatMoment,
 } from "../../lib/format";
 
+/** End of the working day: what "finish by this date" almost always means. */
+const DEFAULT_TARGET_TIME = "18:00";
+
 /** Stable for the whole wizard, so a double submit cannot create two cases. */
 function newIdempotencyKey(): string {
   return `wizard-${crypto.randomUUID()}`;
@@ -48,7 +51,12 @@ export function CreateWizard() {
   const [name, setName] = useState("");
   const [params, setParams] = useState<Record<string, unknown>>({});
   const [roles, setRoles] = useState<Record<string, string>>({});
-  const [target, setTarget] = useState("");
+  const [targetDate, setTargetDate] = useState("");
+  // Split rather than one datetime-local: picking a date in that control
+  // leaves the time blank, so the value stays invalid until the user notices
+  // they also have to type a time. A completion target is almost always
+  // end-of-day anyway, so it is pre-filled and rarely touched.
+  const [targetTime, setTargetTime] = useState(DEFAULT_TARGET_TIME);
   const [error, setError] = useState<string | null>(null);
   const [idempotencyKey] = useState(newIdempotencyKey);
 
@@ -69,6 +77,10 @@ export function CreateWizard() {
   };
   const paramDefs = definition.template_para ?? [];
   const roleDefs = definition.roles ?? [];
+
+  // Local wall-clock; `new Date` interprets it in the browser's zone and the
+  // API is handed UTC.
+  const target = targetDate ? `${targetDate}T${targetTime}` : "";
 
   const preview = useMutation({
     mutationFn: () =>
@@ -272,11 +284,21 @@ export function CreateWizard() {
         <div className="form">
           <label>
             Target completion *
-            <input
-              type="datetime-local"
-              value={target}
-              onChange={(event) => setTarget(event.target.value)}
-            />
+            <span className="field-row">
+              <input
+                type="date"
+                value={targetDate}
+                onChange={(event) => setTargetDate(event.target.value)}
+              />
+              <input
+                type="time"
+                value={targetTime}
+                step={900}
+                onChange={(event) =>
+                  setTargetTime(event.target.value || DEFAULT_TARGET_TIME)
+                }
+              />
+            </span>
           </label>
           <p className="muted small">
             The schedule is worked backwards from this moment.
