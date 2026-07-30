@@ -164,6 +164,12 @@ class CaseDetailOut(CaseSummaryOut):
     dependencies: list[EdgeOut] = Field(default_factory=list)
     permissions: dict[str, bool] = Field(default_factory=dict)
     version: int = 1
+    #: user id -> display name, for every owner referenced by this case.
+    #: Sent once per case rather than repeated on each task, and it is what
+    #: lets the UI show a person instead of a number.
+    people: dict[str, str] = Field(default_factory=dict)
+    #: group id -> name, same reasoning.
+    groups: dict[str, str] = Field(default_factory=dict)
 
 
 class PreviewTaskOut(BaseModel):

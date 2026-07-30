@@ -26,10 +26,18 @@ export interface Tick {
 
 const MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
 
-export const ROW_HEIGHT = 44;
+export const ROW_HEIGHT = 30;
+/** The thick bar that spans a whole phase. */
+export const SUMMARY_HEIGHT = 14;
+/** An individual task's bar, deliberately slimmer than its summary. */
 export const BAR_HEIGHT = 9;
-/** Gap between the baseline bar and the forecast bar within one row. */
-export const TRACK_GAP = 4;
+/**
+ * The baseline is a thin ghost under the forecast rather than a second bar of
+ * equal weight. It is a reference, not a competing reading, and giving it the
+ * same visual weight made every row look like two unrelated things.
+ */
+export const BASELINE_HEIGHT = 3;
+export const BASELINE_GAP = 3;
 
 export function timeToX(viewport: Viewport, at: Date | string): number {
   const moment = typeof at === "string" ? new Date(at) : at;
@@ -160,64 +168,28 @@ export function paddedRange(
   return { from: new Date(min - padding), to: new Date(max + padding) };
 }
 
-export interface DependencyPath {
-  from: { x: number; y: number };
-  to: { x: number; y: number };
-  /** SVG path for the connector. */
-  d: string;
-  /** Lag segment, drawn as a dashed run before the connector. */
-  lag?: { x1: number; x2: number; y: number; label: string };
-}
-
-/**
- * Bezier connector between two bars, with the lag drawn separately.
- *
- * Lag has to look different from work: an unbroken bar across a four-hour wait
- * would read as somebody sitting idle on the job (design.md §4.2).
- */
-export function dependencyPath(
-  viewport: Viewport,
-  predecessorEnd: Date | string,
-  predecessorRow: number,
-  successorStart: Date | string,
-  successorRow: number,
-  lagSeconds: number,
-  lagLabel: string,
-): DependencyPath {
-  const startX = timeToX(viewport, predecessorEnd);
-  const startY = rowCentre(predecessorRow);
-  const endX = timeToX(viewport, successorStart);
-  const endY = rowCentre(successorRow);
-
-  const lagX = lagSeconds > 0 ? startX : undefined;
-  const control = Math.max(Math.abs(endX - startX) * 0.4, 18);
-  const d = `M ${startX} ${startY} C ${startX + control} ${startY} ${
-    endX - control
-  } ${endY} ${endX} ${endY}`;
-
-  return {
-    from: { x: startX, y: startY },
-    to: { x: endX, y: endY },
-    d,
-    lag:
-      lagX === undefined
-        ? undefined
-        : { x1: lagX, x2: endX, y: startY, label: lagLabel },
-  };
-}
-
 export function rowCentre(row: number): number {
   return row * ROW_HEIGHT + ROW_HEIGHT / 2;
 }
 
-/** Y offset of the baseline (upper) track within a row. */
-export function baselineY(row: number): number {
-  return rowCentre(row) - BAR_HEIGHT - TRACK_GAP / 2;
+/** Top of a task's forecast bar. */
+export function barY(row: number): number {
+  return rowCentre(row) - BAR_HEIGHT / 2;
 }
 
-/** Y offset of the forecast (lower) track within a row. */
-export function forecastY(row: number): number {
-  return rowCentre(row) + TRACK_GAP / 2;
+/** Top of the thicker bar that spans a whole phase. */
+export function summaryY(row: number): number {
+  return rowCentre(row) - SUMMARY_HEIGHT / 2;
+}
+
+/**
+ * Top of the baseline ghost, tucked under the forecast bar.
+ *
+ * Below rather than above: the eye lands on the live value first and treats
+ * the plan as the reference it is measured against.
+ */
+export function baselineY(row: number): number {
+  return rowCentre(row) + BAR_HEIGHT / 2 + BASELINE_GAP;
 }
 
 /**
@@ -235,4 +207,216 @@ export function visibleRows(
     total,
   );
   return { first, last };
+}
+
+
+/* --- two-tier axis -------------------------------------------------------- */
+
+export interface AxisTiers {
+  /** Wide spans, labelled and separated by a full-height rule. */
+  major: Tick[];
+  /** Subdivisions inside each major span. */
+  minor: Tick[];
+}
+
+/**
+ * A month-over-week axis, or its equivalent at other zoom levels.
+ *
+ * One row of ticks has to serve two questions at once -- "roughly when" and
+ * "exactly when" -- and a single row can only answer one of them legibly.
+ */
+export function axisTiers(viewport: Viewport): AxisTiers {
+  const days =
+    (viewport.to.getTime() - viewport.from.getTime()) / MS.day;
+
+  if (days > 45) return { major: months(viewport), minor: weeks(viewport) };
+  if (days > 8) return { major: weeks(viewport), minor: days_(viewport) };
+  return { major: days_(viewport), minor: hours(viewport, 6) };
+}
+
+function months(viewport: Viewport): Tick[] {
+  const out: Tick[] = [];
+  const cursor = new Date(viewport.from);
+  cursor.setDate(1);
+  cursor.setHours(0, 0, 0, 0);
+  while (cursor <= viewport.to) {
+    out.push({
+      at: new Date(cursor),
+      x: timeToX(viewport, cursor),
+      label: cursor.toLocaleDateString(undefined, { month: "long" }),
+      major: true,
+    });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return out;
+}
+
+function weeks(viewport: Viewport): Tick[] {
+  const out: Tick[] = [];
+  const cursor = new Date(viewport.from);
+  cursor.setHours(0, 0, 0, 0);
+  // Anchor on Monday so week numbering does not drift with the view.
+  cursor.setDate(cursor.getDate() - ((cursor.getDay() + 6) % 7));
+  let index = 1;
+  let month = cursor.getMonth();
+  while (cursor <= viewport.to) {
+    if (cursor.getMonth() !== month) {
+      month = cursor.getMonth();
+      index = 1;
+    }
+    out.push({
+      at: new Date(cursor),
+      x: timeToX(viewport, cursor),
+      label: `W${index}`,
+      major: false,
+    });
+    index += 1;
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return out;
+}
+
+function days_(viewport: Viewport): Tick[] {
+  const out: Tick[] = [];
+  const cursor = new Date(viewport.from);
+  cursor.setHours(0, 0, 0, 0);
+  while (cursor <= viewport.to) {
+    out.push({
+      at: new Date(cursor),
+      x: timeToX(viewport, cursor),
+      label: `${cursor.getMonth() + 1}/${cursor.getDate()}`,
+      major: cursor.getDay() === 1,
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}
+
+function hours(viewport: Viewport, step: number): Tick[] {
+  const out: Tick[] = [];
+  const cursor = new Date(viewport.from);
+  cursor.setMinutes(0, 0, 0);
+  while (cursor.getHours() % step !== 0) {
+    cursor.setHours(cursor.getHours() + 1);
+  }
+  while (cursor <= viewport.to) {
+    out.push({
+      at: new Date(cursor),
+      x: timeToX(viewport, cursor),
+      label: `${String(cursor.getHours()).padStart(2, "0")}:00`,
+      major: cursor.getHours() === 0,
+    });
+    cursor.setHours(cursor.getHours() + step);
+  }
+  return out;
+}
+
+/* --- connectors ----------------------------------------------------------- */
+
+/**
+ * Right-angled connector with rounded corners.
+ *
+ * Orthogonal rather than curved: a Gantt is a grid, and elbows read as "this
+ * then that" where a bezier reads as decoration. It also stays legible when
+ * several edges converge on one bar, which is exactly when a curve turns into
+ * a knot.
+ */
+export function elbowPath(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  radius = 5,
+): string {
+  const stub = 10;
+  const dy = to.y - from.y;
+
+  if (Math.abs(dy) < 1) return `M ${from.x} ${from.y} H ${to.x}`;
+
+  const sweep = dy > 0 ? 1 : 0;
+  const step = dy > 0 ? radius : -radius;
+
+  // Enough room to turn twice in the forward direction.
+  if (to.x - from.x > stub + radius * 2) {
+    const turn = from.x + stub;
+    return [
+      `M ${from.x} ${from.y}`,
+      `H ${turn - radius}`,
+      `A ${radius} ${radius} 0 0 ${sweep} ${turn} ${from.y + step}`,
+      `V ${to.y - step}`,
+      `A ${radius} ${radius} 0 0 ${sweep === 1 ? 0 : 1} ${turn + radius} ${to.y}`,
+      `H ${to.x}`,
+    ].join(" ");
+  }
+
+  // The successor starts at or before the predecessor ends, so the connector
+  // has to double back rather than cut through the bars.
+  const back = from.x + stub;
+  const mid = from.y + dy / 2;
+  return [
+    `M ${from.x} ${from.y}`,
+    `H ${back}`,
+    `V ${mid}`,
+    `H ${to.x - stub}`,
+    `V ${to.y}`,
+    `H ${to.x}`,
+  ].join(" ");
+}
+
+/* --- grouping ------------------------------------------------------------- */
+
+export interface GroupSpan {
+  key: string;
+  label: string;
+  from: Date;
+  to: Date;
+  /** Index into the phase palette, stable per group. */
+  colour: number;
+}
+
+/**
+ * Span of each phase, for the thick summary bar above its tasks.
+ *
+ * A phase is the unit people plan in, so it deserves a bar of its own rather
+ * than only a heading; the summary is what makes "are we through testing yet"
+ * answerable without reading every row.
+ */
+export function groupSpans(
+  tasks: {
+    phase: string;
+    forecast_start: string | null;
+    forecast_end: string | null;
+  }[],
+): GroupSpan[] {
+  const order: string[] = [];
+  const buckets = new Map<string, { from: number; to: number }>();
+
+  for (const task of tasks) {
+    const key = task.phase || "";
+    if (!buckets.has(key)) {
+      order.push(key);
+      buckets.set(key, { from: Infinity, to: -Infinity });
+    }
+    const bucket = buckets.get(key)!;
+    if (task.forecast_start) {
+      bucket.from = Math.min(bucket.from, Date.parse(task.forecast_start));
+    }
+    if (task.forecast_end) {
+      bucket.to = Math.max(bucket.to, Date.parse(task.forecast_end));
+    }
+  }
+
+  return order
+    .map((key, index) => {
+      const bucket = buckets.get(key)!;
+      if (!Number.isFinite(bucket.from) || !Number.isFinite(bucket.to)) {
+        return null;
+      }
+      return {
+        key,
+        label: key || "Tasks",
+        from: new Date(bucket.from),
+        to: new Date(bucket.to),
+        colour: index,
+      };
+    })
+    .filter((span): span is GroupSpan => span !== null);
 }

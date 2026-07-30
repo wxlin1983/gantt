@@ -1,11 +1,18 @@
 /**
  * SVG Gantt renderer (implement.md §9.2, design.md §4).
  *
- * Built rather than borrowed because of the dual track: every task needs a
- * baseline bar and a forecast bar with independent styling, and the common
- * libraries assume one bar per row. Multi-predecessor connectors, the buffer
- * block and the insert affordance on a dependency line all need the same level
- * of control.
+ * Built rather than borrowed: the chart needs a phase summary bar over its own
+ * tasks, a baseline ghost under each forecast, orthogonal connectors that stay
+ * legible when several converge, and a buffer block at the tail. Libraries
+ * assume one bar per row and stop there.
+ *
+ * Colour encodes **phase**, not status. Phase is what makes a chart readable
+ * from across the room, and status is still carried by the glyph in the rail,
+ * the bar's fill treatment, and its label -- never by colour alone (§4.5).
+ *
+ * The canvas keeps its dark palette in both app themes. It is a distinct
+ * surface, like a map or an editor, and the pale-on-white version of the same
+ * design loses the separation between the plot and the page.
  */
 
 import { useMemo, useState } from "react";
@@ -14,45 +21,84 @@ import type { CaseDetail, Task } from "../../api/types";
 import { STATUS_META, formatDuration, variance } from "../../lib/format";
 import {
   BAR_HEIGHT,
+  BASELINE_HEIGHT,
   ROW_HEIGHT,
-  type Scale,
+  SUMMARY_HEIGHT,
   type Viewport,
+  axisTiers,
   baselineY,
-  dependencyPath,
-  forecastY,
+  barY,
+  elbowPath,
+  groupSpans,
   paddedRange,
-  pickScale,
   rowCentre,
   spanWidth,
-  ticks,
+  summaryY,
   timeToX,
 } from "../../lib/ganttLayout";
 
-const TASK_COLUMN = 260;
-const AXIS_HEIGHT = 34;
+const RAIL = 210;
+const AXIS = 46;
+/** Phase palette; index cycles, so a sixth phase reuses the first colour. */
+const PALETTE = 6;
 
 interface Props {
   detail: CaseDetail;
   onSelect: (task: Task) => void;
   selectedId?: number | null;
   showCriticalPath?: boolean;
-  groupByPhase?: boolean;
 }
+
+type Row =
+  | { kind: "summary"; key: string; label: string; colour: number }
+  | { kind: "task"; task: Task; colour: number };
 
 export function GanttChart({
   detail,
   onSelect,
   selectedId,
   showCriticalPath = true,
-  groupByPhase = true,
 }: Props) {
-  const [width, setWidth] = useState(900);
+  const [width, setWidth] = useState(880);
   const [hovered, setHovered] = useState<string | null>(null);
 
-  const rows = useMemo(
-    () => orderRows(detail.tasks, groupByPhase),
-    [detail.tasks, groupByPhase],
-  );
+  const groups = useMemo(() => groupSpans(detail.tasks), [detail.tasks]);
+  const colourOf = useMemo(() => {
+    const map = new Map<string, number>();
+    groups.forEach((group, index) => map.set(group.key, index % PALETTE));
+    return map;
+  }, [groups]);
+
+  const rows: Row[] = useMemo(() => {
+    const out: Row[] = [];
+    let current: string | null = null;
+    for (const task of detail.tasks) {
+      const key = task.phase || "";
+      const colour = colourOf.get(key) ?? 0;
+      if (key !== current) {
+        const span = groups.find((group) => group.key === key);
+        if (span) {
+          out.push({
+            kind: "summary",
+            key,
+            label: span.label,
+            colour,
+          });
+        }
+        current = key;
+      }
+      out.push({ kind: "task", task, colour });
+    }
+    return out;
+  }, [detail.tasks, groups, colourOf]);
+
+  const rowOf = useMemo(() => {
+    const map = new Map<string, number>();
+    rows.forEach((row, index) => {
+      if (row.kind === "task") map.set(row.task.name, index);
+    });
+    return map;
+  }, [rows]);
 
   const viewport: Viewport = useMemo(() => {
     const { from, to } = paddedRange([
@@ -68,15 +114,8 @@ export function GanttChart({
     return { from, to, width };
   }, [detail.tasks, detail.target_date, width]);
 
-  const scale: Scale = useMemo(
-    () => pickScale(viewport.from, viewport.to),
-    [viewport.from, viewport.to],
-  );
-
-  const rowIndex = new Map(rows.map((row, index) => [row.task?.name, index]));
+  const tiers = useMemo(() => axisTiers(viewport), [viewport]);
   const height = rows.length * ROW_HEIGHT;
-
-  /** Upstream and downstream of the hovered task, for the focus effect. */
   const connected = useMemo(
     () => relatedTasks(detail, hovered),
     [detail, hovered],
@@ -87,32 +126,45 @@ export function GanttChart({
   );
 
   return (
-    <div className="gantt">
-      <div className="gantt-rail" style={{ width: TASK_COLUMN }}>
-        <div className="gantt-axis-spacer" style={{ height: AXIS_HEIGHT }} />
-        {rows.map((row, index) =>
-          row.kind === "phase" ? (
-            <div key={`phase-${row.phase}`} className="gantt-phase">
-              {row.phase}
+    <div className="gantt" style={{ ["--rail" as string]: `${RAIL}px` }}>
+      <div className="gantt-rail">
+        <div className="gantt-rail-head" style={{ height: AXIS }}>
+          {detail.name}
+        </div>
+        {rows.map((row) =>
+          row.kind === "summary" ? (
+            <div
+              key={`g-${row.key}`}
+              className="gantt-group"
+              style={{ height: ROW_HEIGHT }}
+            >
+              {row.label}
             </div>
           ) : (
             <button
               key={row.task.id}
               type="button"
-              className={rowClass(row.task, selectedId, connected, hovered)}
+              className={[
+                "gantt-row",
+                row.task.id === selectedId ? "selected" : "",
+                hovered && !connected.has(row.task.name) ? "dimmed" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               style={{ height: ROW_HEIGHT }}
               onClick={() => onSelect(row.task)}
               onMouseEnter={() => setHovered(row.task.name)}
               onMouseLeave={() => setHovered(null)}
+              title={`${STATUS_META[row.task.status].label}${
+                row.task.is_optional ? " · optional" : ""
+              }${row.task.is_unplanned ? " · added after creation" : ""}`}
             >
-              <span className={`status status-${row.task.status}`}>
-                {STATUS_META[row.task.status].icon}
-              </span>
               <span className="gantt-row-name">
                 {row.task.display_name || row.task.name}
               </span>
-              {rowBadges(row.task, showCriticalPath)}
-              <span className="gantt-row-index">{index}</span>
+              <span className={`status status-${row.task.status}`}>
+                {STATUS_META[row.task.status].icon}
+              </span>
             </button>
           ),
         )}
@@ -128,28 +180,74 @@ export function GanttChart({
       >
         <svg
           width={width}
-          height={height + AXIS_HEIGHT}
+          height={height + AXIS}
           role="img"
-          aria-label="Case schedule"
+          aria-label={`Schedule for ${detail.name}`}
         >
-          <g className="gantt-axis">
-            {ticks(viewport, scale).map((tick) => (
-              <g key={tick.at.toISOString()}>
-                <line
-                  x1={tick.x}
-                  x2={tick.x}
-                  y1={AXIS_HEIGHT - 8}
-                  y2={height + AXIS_HEIGHT}
-                  className={tick.major ? "tick-major" : "tick-minor"}
-                />
-                <text x={tick.x + 4} y={16} className="tick-label">
-                  {tick.label}
-                </text>
-              </g>
+          {/* Major columns run the full height, which is what makes a bar's
+              position readable without tracing back up to the axis. */}
+          <g className="gantt-grid">
+            {tiers.major.map((tick) => (
+              <line
+                key={`M${tick.at.toISOString()}`}
+                x1={tick.x}
+                x2={tick.x}
+                y1={0}
+                y2={height + AXIS}
+                className="grid-major"
+              />
+            ))}
+            {tiers.minor.map((tick) => (
+              <line
+                key={`m${tick.at.toISOString()}`}
+                x1={tick.x}
+                x2={tick.x}
+                y1={AXIS}
+                y2={height + AXIS}
+                className="grid-minor"
+              />
             ))}
           </g>
 
-          <g transform={`translate(0, ${AXIS_HEIGHT})`}>
+          <g className="gantt-axis">
+            {tiers.major.map((tick, index) => {
+              const next = tiers.major[index + 1];
+              const right = next ? next.x : width;
+              return (
+                <text
+                  key={`ML${tick.at.toISOString()}`}
+                  x={(Math.max(tick.x, 0) + right) / 2}
+                  y={20}
+                  className="axis-major"
+                >
+                  {tick.label}
+                </text>
+              );
+            })}
+            {tiers.minor.map((tick, index) => {
+              const next = tiers.minor[index + 1];
+              const right = next ? next.x : width;
+              return (
+                <text
+                  key={`mL${tick.at.toISOString()}`}
+                  x={(tick.x + right) / 2}
+                  y={38}
+                  className="axis-minor"
+                >
+                  {tick.label}
+                </text>
+              );
+            })}
+            <line
+              x1={0}
+              x2={width}
+              y1={AXIS}
+              y2={AXIS}
+              className="axis-rule"
+            />
+          </g>
+
+          <g transform={`translate(0, ${AXIS})`}>
             {detail.buffer_seconds > 0 && (
               <BufferBlock
                 viewport={viewport}
@@ -158,6 +256,115 @@ export function GanttChart({
                 height={height}
                 consumed={detail.buffer_consumed_ratio ?? 0}
               />
+            )}
+
+            {/* A rule under each group, as in the reference: it separates the
+                phases without needing a box around each one. */}
+            {rows.map((row, index) =>
+              row.kind === "summary" && index > 0 ? (
+                <line
+                  key={`sep-${row.key}`}
+                  x1={0}
+                  x2={width}
+                  y1={index * ROW_HEIGHT}
+                  y2={index * ROW_HEIGHT}
+                  className="group-rule"
+                />
+              ) : null,
+            )}
+
+            <g className="gantt-deps">
+              {detail.dependencies.map((edge) => {
+                const from = detail.tasks.find(
+                  (task) => task.name === edge.predecessor,
+                );
+                const to = detail.tasks.find(
+                  (task) => task.name === edge.successor,
+                );
+                const fromRow = rowOf.get(edge.predecessor);
+                const toRow = rowOf.get(edge.successor);
+                if (
+                  !from?.forecast_end ||
+                  !to?.forecast_start ||
+                  fromRow === undefined ||
+                  toRow === undefined
+                ) {
+                  return null;
+                }
+                const start = {
+                  x: timeToX(viewport, from.forecast_end),
+                  y: rowCentre(fromRow),
+                };
+                const finish = {
+                  x: timeToX(viewport, to.forecast_start),
+                  y: rowCentre(toRow),
+                };
+                const dimmed =
+                  hovered !== null &&
+                  !connected.has(edge.predecessor) &&
+                  !connected.has(edge.successor);
+                return (
+                  <g
+                    key={`${edge.predecessor}->${edge.successor}`}
+                    className={[
+                      "dep",
+                      `hue-${colourOf.get(from.phase || "") ?? 0}`,
+                      dimmed ? "dimmed" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    {edge.lag_seconds > 0 && (
+                      <>
+                        {/* Waiting is not work: a solid run across a four-hour
+                            handover would read as somebody idling. */}
+                        <line
+                          x1={start.x}
+                          x2={finish.x}
+                          y1={start.y}
+                          y2={start.y}
+                          className="dep-lag"
+                        />
+                        <text
+                          x={(start.x + finish.x) / 2}
+                          y={start.y - 5}
+                          className="dep-lag-label"
+                        >
+                          {formatDuration(edge.lag_seconds)}
+                        </text>
+                      </>
+                    )}
+                    <path d={elbowPath(start, finish)} className="dep-line" />
+                    <circle cx={finish.x} cy={finish.y} r={2.5} />
+                  </g>
+                );
+              })}
+            </g>
+
+            {rows.map((row, index) =>
+              row.kind === "summary" ? (
+                <SummaryBar
+                  key={`sb-${row.key}`}
+                  span={groups.find((group) => group.key === row.key)!}
+                  row={index}
+                  viewport={viewport}
+                  owner={ownerLabel(detail, row.key)}
+                />
+              ) : (
+                <TaskBars
+                  key={row.task.id}
+                  task={row.task}
+                  colour={row.colour}
+                  row={index}
+                  viewport={viewport}
+                  dimmed={
+                    hovered !== null && !connected.has(row.task.name)
+                  }
+                  showCriticalPath={showCriticalPath}
+                  onSelect={onSelect}
+                  onHover={setHovered}
+                />
+              ),
             )}
 
             <Marker
@@ -174,92 +381,14 @@ export function GanttChart({
               className="marker-target"
               label="target"
             />
-            {detail.target_date_history.length > 0 && (
+            {detail.target_date_history[0] && (
               <Marker
                 viewport={viewport}
-                at={new Date(detail.target_date_history[0]!.from)}
+                at={new Date(detail.target_date_history[0].from)}
                 height={height}
                 className="marker-original"
-                label="original target"
+                label="original"
               />
-            )}
-
-            <g className="gantt-deps">
-              {detail.dependencies.map((edge) => {
-                const from = detail.tasks.find(
-                  (task) => task.name === edge.predecessor,
-                );
-                const to = detail.tasks.find(
-                  (task) => task.name === edge.successor,
-                );
-                const fromRow = rowIndex.get(edge.predecessor);
-                const toRow = rowIndex.get(edge.successor);
-                if (
-                  !from?.forecast_end ||
-                  !to?.forecast_start ||
-                  fromRow === undefined ||
-                  toRow === undefined
-                ) {
-                  return null;
-                }
-                const path = dependencyPath(
-                  viewport,
-                  from.forecast_end,
-                  fromRow,
-                  to.forecast_start,
-                  toRow,
-                  edge.lag_seconds,
-                  formatDuration(edge.lag_seconds),
-                );
-                const dimmed =
-                  hovered !== null &&
-                  !connected.has(edge.predecessor) &&
-                  !connected.has(edge.successor);
-                return (
-                  <g
-                    key={`${edge.predecessor}->${edge.successor}`}
-                    className={dimmed ? "dep dimmed" : "dep"}
-                  >
-                    {path.lag && (
-                      <>
-                        <line
-                          x1={path.lag.x1}
-                          x2={path.lag.x2}
-                          y1={path.lag.y}
-                          y2={path.lag.y}
-                          className="dep-lag"
-                        />
-                        <text
-                          x={(path.lag.x1 + path.lag.x2) / 2}
-                          y={path.lag.y - 4}
-                          className="dep-lag-label"
-                        >
-                          {path.lag.label}
-                        </text>
-                      </>
-                    )}
-                    <path d={path.d} className="dep-line" />
-                    <circle cx={path.to.x} cy={path.to.y} r={2.5} />
-                  </g>
-                );
-              })}
-            </g>
-
-            {rows.map((row, index) =>
-              row.kind === "task" ? (
-                <TaskBars
-                  key={row.task.id}
-                  task={row.task}
-                  row={index}
-                  viewport={viewport}
-                  dimmed={
-                    hovered !== null && !connected.has(row.task.name)
-                  }
-                  showCriticalPath={showCriticalPath}
-                  onSelect={onSelect}
-                  onHover={setHovered}
-                />
-              ) : null,
             )}
           </g>
         </svg>
@@ -268,8 +397,40 @@ export function GanttChart({
   );
 }
 
+function SummaryBar({
+  span,
+  row,
+  viewport,
+  owner,
+}: {
+  span: { from: Date; to: Date; colour: number };
+  row: number;
+  viewport: Viewport;
+  owner: string | null;
+}) {
+  const x = timeToX(viewport, span.from);
+  return (
+    <g className={`summary hue-${span.colour}`}>
+      {owner && (
+        <text x={x} y={summaryY(row) - 5} className="summary-owner">
+          {owner}
+        </text>
+      )}
+      <rect
+        x={x}
+        y={summaryY(row)}
+        width={spanWidth(viewport, span.from, span.to)}
+        height={SUMMARY_HEIGHT}
+        rx={SUMMARY_HEIGHT / 2}
+        className="bar bar-summary"
+      />
+    </g>
+  );
+}
+
 function TaskBars({
   task,
+  colour,
   row,
   viewport,
   dimmed,
@@ -278,6 +439,7 @@ function TaskBars({
   onHover,
 }: {
   task: Task;
+  colour: number;
   row: number;
   viewport: Viewport;
   dimmed: boolean;
@@ -292,8 +454,11 @@ function TaskBars({
     <g
       className={[
         "bars",
+        `hue-${colour}`,
+        `is-${task.status}`,
         dimmed ? "dimmed" : "",
         showCriticalPath && task.is_on_critical_path ? "critical" : "",
+        task.is_optional ? "optional" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -301,47 +466,41 @@ function TaskBars({
       onMouseLeave={() => onHover(null)}
       onClick={() => onSelect(task)}
     >
-      {/* Baseline: the original plan, which never moves. Absent for a task
-          inserted after creation, which is drawn single-track instead. */}
+      {task.forecast_start && task.forecast_end && (
+        <rect
+          x={timeToX(viewport, task.forecast_start)}
+          y={barY(row)}
+          width={spanWidth(
+            viewport,
+            task.forecast_start,
+            task.forecast_end,
+          )}
+          height={BAR_HEIGHT}
+          rx={BAR_HEIGHT / 2}
+          className="bar bar-task"
+        />
+      )}
+
+      {/* No baseline means the task was inserted after the case began, so
+          there is nothing to compare it against (§5.10). */}
       {task.baseline_start && task.baseline_end && (
         <rect
           x={timeToX(viewport, task.baseline_start)}
           y={baselineY(row)}
           width={spanWidth(viewport, task.baseline_start, task.baseline_end)}
-          height={BAR_HEIGHT}
-          rx={2}
+          height={BASELINE_HEIGHT}
+          rx={BASELINE_HEIGHT / 2}
           className="bar bar-baseline"
         />
       )}
 
-      {task.forecast_start && task.forecast_end && (
-        <rect
-          x={timeToX(viewport, task.forecast_start)}
-          y={task.is_unplanned ? rowCentre(row) - BAR_HEIGHT / 2 : forecastY(row)}
-          width={spanWidth(viewport, task.forecast_start, task.forecast_end)}
-          height={BAR_HEIGHT}
-          rx={2}
-          className={[
-            "bar",
-            `bar-${task.status}`,
-            task.is_optional ? "bar-optional" : "",
-            late ? "bar-late" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-        />
-      )}
-
-      {delta !== null && Math.abs(delta) >= 3600 && (
+      {delta !== null && Math.abs(delta) >= 3600 && task.forecast_end && (
         <text
-          x={
-            timeToX(viewport, task.forecast_end!) +
-            6
-          }
-          y={rowCentre(row) + 4}
+          x={timeToX(viewport, task.forecast_end) + 7}
+          y={rowCentre(row) + 3}
           className={late ? "delta delta-late" : "delta"}
         >
-          {late ? "+" : "-"}
+          {late ? "+" : "−"}
           {formatDuration(Math.abs(delta))}
         </text>
       )}
@@ -364,12 +523,12 @@ function BufferBlock({
 }) {
   const x = timeToX(viewport, from);
   const full = spanWidth(viewport, from, to);
-  // The consumed portion is filled in, so "how much is left to burn" is
-  // readable at a glance (design.md §4.1).
   const eaten = Math.min(Math.max(consumed, 0), 1) * full;
   return (
     <g className="buffer">
       <rect x={x} y={0} width={full} height={height} className="buffer-block" />
+      {/* The consumed portion is filled, so "how much is left to burn" is
+          readable without doing arithmetic. */}
       {eaten > 0 && (
         <rect
           x={x}
@@ -379,9 +538,6 @@ function BufferBlock({
           className="buffer-consumed"
         />
       )}
-      <text x={x + 4} y={12} className="buffer-label">
-        buffer
-      </text>
     </g>
   );
 }
@@ -404,44 +560,31 @@ function Marker({
   return (
     <g className={className}>
       <line x1={x} x2={x} y1={0} y2={height} />
-      <text x={x + 4} y={height - 4}>
+      <text x={x + 5} y={12}>
         {label}
       </text>
     </g>
   );
 }
 
-type Row =
-  | { kind: "phase"; phase: string; task?: undefined }
-  | { kind: "task"; task: Task; phase: string };
-
-/** Order rows, inserting phase headings when grouping is on. */
-function orderRows(tasks: Task[], groupByPhase: boolean): Row[] {
-  if (!groupByPhase) {
-    return tasks.map((task) => ({
-      kind: "task" as const,
-      task,
-      phase: task.phase,
-    }));
+/**
+ * Who a phase belongs to, shown above its summary bar.
+ *
+ * The most common owner rather than a list: the label answers "who do I go to
+ * about this phase", and three names would answer nothing.
+ */
+function ownerLabel(detail: CaseDetail, phase: string): string | null {
+  const counts = new Map<number, number>();
+  for (const task of detail.tasks) {
+    if ((task.phase || "") !== phase || task.owner_id === null) continue;
+    counts.set(task.owner_id, (counts.get(task.owner_id) ?? 0) + 1);
   }
-  const rows: Row[] = [];
-  let current: string | null = null;
-  for (const task of tasks) {
-    if (task.phase && task.phase !== current) {
-      rows.push({ kind: "phase", phase: task.phase });
-      current = task.phase;
-    }
-    rows.push({ kind: "task", task, phase: task.phase });
-  }
-  return rows;
+  if (counts.size === 0) return null;
+  const [top] = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  return detail.people[String(top![0])] ?? null;
 }
 
-/**
- * Everything upstream and downstream of a task.
- *
- * Hovering highlights the whole chain rather than one row, because "what does
- * this block and what blocks it" is the question being asked.
- */
+/** Everything upstream and downstream, for the hover focus effect. */
 function relatedTasks(detail: CaseDetail, name: string | null): Set<string> {
   if (!name) return new Set();
   const found = new Set<string>([name]);
@@ -460,46 +603,4 @@ function relatedTasks(detail: CaseDetail, name: string | null): Set<string> {
     }
   }
   return found;
-}
-
-function rowClass(
-  task: Task,
-  selectedId: number | null | undefined,
-  connected: Set<string>,
-  hovered: string | null,
-): string {
-  return [
-    "gantt-row",
-    task.id === selectedId ? "selected" : "",
-    hovered !== null && !connected.has(task.name) ? "dimmed" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function rowBadges(task: Task, showCriticalPath: boolean) {
-  return (
-    <span className="gantt-row-badges">
-      {showCriticalPath && task.is_on_critical_path && (
-        <span className="badge badge-critical" title="On the critical path">
-          !
-        </span>
-      )}
-      {task.is_optional && (
-        <span className="badge" title="Optional: the case can close without it">
-          ◇
-        </span>
-      )}
-      {task.is_unplanned && (
-        <span className="badge" title="Added after the case was created">
-          ＋
-        </span>
-      )}
-      {task.task_api && (
-        <span className="badge" title={`Automated via ${task.task_api}`}>
-          🔌
-        </span>
-      )}
-    </span>
-  );
 }

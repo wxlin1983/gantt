@@ -97,6 +97,10 @@ export interface CaseDetail extends CaseSummary {
   dependencies: Edge[];
   permissions: Record<string, boolean>;
   version: number;
+  /** user id -> display name, for every owner this case refers to. */
+  people: Record<string, string>;
+  /** group id -> name. */
+  groups: Record<string, string>;
 }
 
 export interface PreviewTask {

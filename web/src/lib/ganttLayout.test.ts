@@ -2,13 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   BAR_HEIGHT,
+  BASELINE_HEIGHT,
   ROW_HEIGHT,
+  SUMMARY_HEIGHT,
+  axisTiers,
   baselineY,
-  dependencyPath,
-  forecastY,
+  barY,
+  elbowPath,
+  groupSpans,
   paddedRange,
   pickScale,
+  rowCentre,
   spanWidth,
+  summaryY,
   ticks,
   timeToX,
   visibleRows,
@@ -162,54 +168,156 @@ describe("paddedRange", () => {
 });
 
 describe("row geometry", () => {
-  it("stacks baseline above forecast without overlap", () => {
-    const upper = baselineY(0);
-    const lower = forecastY(0);
-    expect(upper + BAR_HEIGHT).toBeLessThanOrEqual(lower);
+  it("keeps the forecast bar and its baseline ghost apart", () => {
+    // The baseline sits under the forecast, not beside it: it is a reference,
+    // not a competing reading.
+    expect(barY(0) + BAR_HEIGHT).toBeLessThanOrEqual(baselineY(0));
   });
 
-  it("keeps both tracks inside the row", () => {
-    expect(baselineY(0)).toBeGreaterThanOrEqual(0);
-    expect(forecastY(0) + BAR_HEIGHT).toBeLessThanOrEqual(ROW_HEIGHT);
+  it("keeps everything inside the row", () => {
+    expect(barY(0)).toBeGreaterThanOrEqual(0);
+    expect(baselineY(0) + BASELINE_HEIGHT).toBeLessThanOrEqual(ROW_HEIGHT);
+    expect(summaryY(0)).toBeGreaterThanOrEqual(0);
+    expect(summaryY(0) + SUMMARY_HEIGHT).toBeLessThanOrEqual(ROW_HEIGHT);
+  });
+
+  it("makes a summary bar heavier than the tasks under it", () => {
+    expect(SUMMARY_HEIGHT).toBeGreaterThan(BAR_HEIGHT);
+  });
+
+  it("centres both bars on the same row line", () => {
+    expect(barY(0) + BAR_HEIGHT / 2).toBeCloseTo(rowCentre(0));
+    expect(summaryY(0) + SUMMARY_HEIGHT / 2).toBeCloseTo(rowCentre(0));
   });
 
   it("offsets each row by a full row height", () => {
-    expect(baselineY(3) - baselineY(2)).toBe(ROW_HEIGHT);
+    expect(barY(3) - barY(2)).toBe(ROW_HEIGHT);
   });
 });
 
-describe("dependencyPath", () => {
-  it("connects the predecessor's end to the successor's start", () => {
-    const path = dependencyPath(
-      viewport,
-      "2026-08-14T12:00:00Z",
-      0,
-      "2026-08-15T00:00:00Z",
-      1,
-      0,
-      "",
-    );
-    expect(path.from.x).toBe(timeToX(viewport, "2026-08-14T12:00:00Z"));
-    expect(path.to.x).toBe(timeToX(viewport, "2026-08-15T00:00:00Z"));
-    expect(path.d.startsWith("M ")).toBe(true);
-    expect(path.lag).toBeUndefined();
+describe("axisTiers", () => {
+  function span(days: number): Viewport {
+    const from = new Date("2026-08-01T00:00:00Z");
+    return {
+      from,
+      to: new Date(from.getTime() + days * 86_400_000),
+      width: 960,
+    };
+  }
+
+  it("reads a quarter as months over weeks", () => {
+    const tiers = axisTiers(span(90));
+    expect(tiers.major.length).toBeGreaterThan(2);
+    expect(tiers.major[0]!.label).toMatch(/[A-Za-z]/);
+    expect(tiers.minor[0]!.label).toMatch(/^W\d+$/);
   });
 
-  it("reports a lag segment separately from the connector", () => {
-    // Lag is waiting, not work: drawing it as one continuous bar would read as
-    // somebody idling on the job.
-    const path = dependencyPath(
-      viewport,
-      "2026-08-14T12:00:00Z",
-      0,
-      "2026-08-14T16:00:00Z",
-      1,
-      4 * 3600,
-      "4H",
-    );
-    expect(path.lag).toBeDefined();
-    expect(path.lag!.label).toBe("4H");
-    expect(path.lag!.x2).toBeGreaterThan(path.lag!.x1);
+  it("reads a fortnight as weeks over days", () => {
+    const tiers = axisTiers(span(14));
+    expect(tiers.major[0]!.label).toMatch(/^W\d+$/);
+    expect(tiers.minor[0]!.label).toMatch(/^\d+\/\d+$/);
+  });
+
+  it("reads a couple of days as days over hours", () => {
+    const tiers = axisTiers(span(2));
+    expect(tiers.minor[0]!.label).toMatch(/^\d{2}:00$/);
+  });
+
+  it("always gives both tiers something to show", () => {
+    for (const days of [1, 5, 20, 60, 200]) {
+      const tiers = axisTiers(span(days));
+      expect(tiers.major.length).toBeGreaterThan(0);
+      expect(tiers.minor.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("restarts week numbering each month", () => {
+    const tiers = axisTiers(span(90));
+    const labels = tiers.minor.map((tick) => tick.label);
+    // W1 appears once per month rather than counting up all quarter
+    expect(labels.filter((label) => label === "W1").length).toBeGreaterThan(1);
+  });
+});
+
+describe("elbowPath", () => {
+  it("is orthogonal, not curved", () => {
+    const d = elbowPath({ x: 10, y: 10 }, { x: 200, y: 40 });
+    // A grid deserves right angles; C would mean a bezier
+    expect(d).not.toContain("C");
+    expect(d).toContain("H");
+    expect(d).toContain("V");
+  });
+
+  it("starts and ends where it was asked to", () => {
+    const d = elbowPath({ x: 10, y: 10 }, { x: 200, y: 40 });
+    expect(d.startsWith("M 10 10")).toBe(true);
+    expect(d.trimEnd().endsWith("H 200")).toBe(true);
+  });
+
+  it("collapses to a straight run on the same row", () => {
+    expect(elbowPath({ x: 10, y: 20 }, { x: 90, y: 20 })).toBe("M 10 20 H 90");
+  });
+
+  it("doubles back when the successor starts first", () => {
+    // Otherwise the connector would cut straight through both bars
+    const d = elbowPath({ x: 200, y: 10 }, { x: 40, y: 40 });
+    expect(d).toContain("H 40");
+    expect(d.split("V").length).toBeGreaterThan(2);
+  });
+
+  it("turns downwards and upwards alike", () => {
+    expect(elbowPath({ x: 0, y: 100 }, { x: 200, y: 10 })).toContain("V");
+  });
+});
+
+describe("groupSpans", () => {
+  const task = (phase: string, from: string, to: string) => ({
+    phase,
+    forecast_start: from,
+    forecast_end: to,
+  });
+
+  it("spans each phase from its first start to its last end", () => {
+    const spans = groupSpans([
+      task("Prep", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+      task("Prep", "2026-08-03T00:00:00Z", "2026-08-06T00:00:00Z"),
+      task("Test", "2026-08-07T00:00:00Z", "2026-08-09T00:00:00Z"),
+    ]);
+    expect(spans.map((span) => span.key)).toEqual(["Prep", "Test"]);
+    expect(spans[0]!.from.toISOString()).toBe("2026-08-01T00:00:00.000Z");
+    expect(spans[0]!.to.toISOString()).toBe("2026-08-06T00:00:00.000Z");
+  });
+
+  it("keeps the order the tasks arrived in", () => {
+    const spans = groupSpans([
+      task("Z", "2026-08-05T00:00:00Z", "2026-08-06T00:00:00Z"),
+      task("A", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+    ]);
+    // Phase order comes from the template, not the alphabet
+    expect(spans.map((span) => span.key)).toEqual(["Z", "A"]);
+  });
+
+  it("gives each phase its own palette slot", () => {
+    const spans = groupSpans([
+      task("A", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+      task("B", "2026-08-02T00:00:00Z", "2026-08-03T00:00:00Z"),
+    ]);
+    expect(new Set(spans.map((span) => span.colour)).size).toBe(2);
+  });
+
+  it("handles ungrouped tasks as one span", () => {
+    const spans = groupSpans([
+      task("", "2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"),
+    ]);
+    expect(spans).toHaveLength(1);
+    expect(spans[0]!.label).toBe("Tasks");
+  });
+
+  it("drops a phase whose tasks have no forecast at all", () => {
+    const spans = groupSpans([
+      { phase: "Ghost", forecast_start: null, forecast_end: null },
+    ]);
+    expect(spans).toEqual([]);
   });
 });
 

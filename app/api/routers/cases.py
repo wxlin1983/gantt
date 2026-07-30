@@ -820,6 +820,39 @@ async def _detail(
         case.tasks, key=lambda task: (task.sort_order, task.name)
     )
 
+    owner_ids = {task.owner_id for task in case.tasks if task.owner_id}
+    owner_ids.discard(None)
+    if case.owner_id:
+        owner_ids.add(case.owner_id)
+    group_ids = {task.group_id for task in case.tasks if task.group_id}
+
+    people = (
+        dict(
+            (
+                await session.execute(
+                    select(User.id, User.display_name).where(
+                        User.id.in_(owner_ids)
+                    )
+                )
+            ).all()
+        )
+        if owner_ids
+        else {}
+    )
+    groups = (
+        dict(
+            (
+                await session.execute(
+                    select(Group.id, Group.display_name).where(
+                        Group.id.in_(group_ids)
+                    )
+                )
+            ).all()
+        )
+        if group_ids
+        else {}
+    )
+
     return CaseDetailOut(
         **_summary(case).model_dump(),
         params=case.params or {},
@@ -851,8 +884,8 @@ async def _detail(
             if edge.predecessor_id in by_id and edge.successor_id in by_id
         ],
         permissions=permissions.case_permissions(principal, case),
+        people={str(key): value for key, value in people.items()},
+        groups={str(key): value for key, value in groups.items()},
     )
 
 
-# Imported for the response model's forward references.
-_ = (User, Group)

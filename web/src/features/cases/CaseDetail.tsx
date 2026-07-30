@@ -531,7 +531,9 @@ function TaskDrawer({
 
         <dt>Owner</dt>
         <dd>
-          {task.owner_id ?? "unassigned"}
+          {task.owner_id
+            ? (detail.people[String(task.owner_id)] ?? `#${task.owner_id}`)
+            : "unassigned"}
           {/* Where the owner came from matters: changing it here affects only
               this task, not everyone holding the same role (design.md §5). */}
           {task.owner_source.startsWith("role:") && (
