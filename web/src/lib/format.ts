@@ -10,11 +10,32 @@ export function formatDuration(seconds: number): string {
   return `${seconds}S`;
 }
 
-/** Signed offset, e.g. `+8H` — how the case list reports variance. */
+/**
+ * A measured length of time, for people rather than for the DSL.
+ *
+ * `formatDuration` speaks the template's own units, which is right for a value
+ * somebody typed and wrong for one we subtracted: a variance of 1,131,452
+ * seconds is not divisible by anything, and came out as `1131452S`.
+ */
+export function formatSpan(seconds: number): string {
+  const total = Math.round(Math.abs(seconds));
+  if (total < 60) return `${total}s`;
+  if (total < 3600) return `${Math.round(total / 60)}m`;
+  if (total < 86400) {
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.round((total - hours * 3600) / 60);
+    return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  const days = Math.floor(total / 86400);
+  const hours = Math.round((total - days * 86400) / 3600);
+  return hours ? `${days}d ${hours}h` : `${days}d`;
+}
+
+/** Signed offset, e.g. `+8h` — how the case list reports variance. */
 export function formatDelta(seconds: number): string {
   if (seconds === 0) return "on time";
-  const sign = seconds > 0 ? "+" : "-";
-  return sign + formatDuration(Math.abs(seconds));
+  const sign = seconds > 0 ? "+" : "−";
+  return sign + formatSpan(seconds);
 }
 
 export function formatMoment(value: string | null): string {

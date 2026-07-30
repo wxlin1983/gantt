@@ -15,10 +15,10 @@
  * design loses the separation between the plot and the page.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CaseDetail, Task } from "../../api/types";
-import { STATUS_META, formatDuration, variance } from "../../lib/format";
+import { STATUS_META, formatSpan, variance } from "../../lib/format";
 import {
   BAR_HEIGHT,
   BASELINE_HEIGHT,
@@ -61,6 +61,21 @@ export function GanttChart({
 }: Props) {
   const [width, setWidth] = useState(880);
   const [hovered, setHovered] = useState<string | null>(null);
+  const canvas = useRef<HTMLDivElement | null>(null);
+
+  // Measured continuously, not once. The axis scale is derived from this
+  // width, so a chart sized at mount kept its first guess through every
+  // window resize and every change to what sits beside it.
+  useEffect(() => {
+    const node = canvas.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const measured = Math.round(entries[0]!.contentRect.width);
+      if (measured > 0) setWidth(measured);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   const groups = useMemo(() => groupSpans(detail.tasks), [detail.tasks]);
   const colourOf = useMemo(() => {
@@ -170,14 +185,7 @@ export function GanttChart({
         )}
       </div>
 
-      <div
-        className="gantt-canvas"
-        ref={(node) => {
-          if (node && node.clientWidth && node.clientWidth !== width) {
-            setWidth(node.clientWidth);
-          }
-        }}
-      >
+      <div className="gantt-canvas" ref={canvas}>
         <svg
           width={width}
           height={height + AXIS}
@@ -314,27 +322,27 @@ export function GanttChart({
                       .filter(Boolean)
                       .join(" ")}
                   >
+                    {/* Waiting is not work, so a lagged edge is drawn as a
+                        dashed run rather than getting its own line beneath the
+                        connector -- the two ran along the same row and the
+                        dashes simply disappeared under the solid stroke. */}
+                    <path
+                      d={elbowPath(start, finish)}
+                      className={
+                        edge.lag_seconds > 0
+                          ? "dep-line is-lagged"
+                          : "dep-line"
+                      }
+                    />
                     {edge.lag_seconds > 0 && (
-                      <>
-                        {/* Waiting is not work: a solid run across a four-hour
-                            handover would read as somebody idling. */}
-                        <line
-                          x1={start.x}
-                          x2={finish.x}
-                          y1={start.y}
-                          y2={start.y}
-                          className="dep-lag"
-                        />
-                        <text
-                          x={(start.x + finish.x) / 2}
-                          y={start.y - 5}
-                          className="dep-lag-label"
-                        >
-                          {formatDuration(edge.lag_seconds)}
-                        </text>
-                      </>
+                      <text
+                        x={(start.x + finish.x) / 2}
+                        y={start.y - 5}
+                        className="dep-lag-label"
+                      >
+                        {formatSpan(edge.lag_seconds)}
+                      </text>
                     )}
-                    <path d={elbowPath(start, finish)} className="dep-line" />
                     <circle cx={finish.x} cy={finish.y} r={2.5} />
                   </g>
                 );
@@ -501,7 +509,7 @@ function TaskBars({
           className={late ? "delta delta-late" : "delta"}
         >
           {late ? "+" : "−"}
-          {formatDuration(Math.abs(delta))}
+          {formatSpan(delta)}
         </text>
       )}
     </g>

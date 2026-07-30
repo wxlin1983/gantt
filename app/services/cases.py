@@ -503,7 +503,12 @@ async def complete_task(
 
     before = task.status
     task.status = TaskStatus.DONE
-    task.actual_start = task.actual_start or finished
+    # `actual_start` stays NULL when nobody ever started the task, which is the
+    # normal shape of a manual tick. Backfilling it with the finish time
+    # recorded a fact we do not have, and the consequences were real: the chart
+    # drew a task of zero length, and the template health report counted it as
+    # a step that takes no time at all. The forward pass credits it its
+    # budgeted duration for display (§5.3).
     task.actual_end = finished
     task.completion_source = source
     # NULL actor means the system acted, not a person.

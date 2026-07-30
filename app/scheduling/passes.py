@@ -122,9 +122,16 @@ def forward_pass(
             # Settled without timestamps (cancelled before it began) collapses
             # to a zero-length interval at the present.
             end = task.actual_end or now
-            schedule.intervals[task_id] = Interval(
-                task.actual_start or end, end
-            )
+            start = task.actual_start
+            if start is None and task.status is TaskStatus.DONE:
+                # Ticked off without ever having been started, which is the
+                # ordinary path for a manual completion. We do not know when
+                # the work began, so we credit it the time it was budgeted:
+                # collapsing it to an instant drew a task that took no time at
+                # all and dragged its whole phase back to the moment it was
+                # ticked.
+                start = calendar.sub(end, effective_seconds(task, calendar))
+            schedule.intervals[task_id] = Interval(start or end, end)
             continue
 
         predecessors = incoming.get(task_id, ())

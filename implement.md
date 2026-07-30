@@ -959,7 +959,11 @@ def forward_pass(tasks, edges, now) -> dict[TaskId, tuple[datetime, datetime]]:
     for task in order:                         # 由起點往終點
         if task.is_settled:                    # 見 §4.12，不只 done
             end = task.actual_end or now
-            result[task.id] = (task.actual_start or end, end)
+            start = task.actual_start
+            if start is None and task.status is DONE:
+                # 手動勾完成時沒有人「開工」過，actual_start 保持 NULL
+                start = calendar_for(task).sub(end, duration_of(task))
+            result[task.id] = (start or end, end)
             continue
 
         preds = edges.predecessors_of(task.id)
@@ -992,10 +996,11 @@ def forward_pass(tasks, edges, now) -> dict[TaskId, tuple[datetime, datetime]]:
 
 `remaining_seconds(task)`：`running` 中的 task 取 `duration - calendar.elapsed(actual_start, now)`，下限為 0；其餘取完整 `duration`。用 `elapsed` 而非時鐘時間相減，才不會讓跨週末的 `business` task 虛增進度。
 
-**兩條容易寫錯的規則**
+**三條容易寫錯的規則**
 
 1. **凡「已結算」的 task 都固定住，不只 `done`。** 一個 `cancelled` 的 task 若仍佔用完整工期，會持續把下游往後推——推的是永遠不會發生的工作。已結算但沒有實際時間戳（開始前就被取消）則收斂為現在的零長度區間。
 2. **`running` task 的剩餘工作從 `now` 起算，不是從 `actual_start` 起算。** bar 的起點是實際開工時間（那是事實，不對齊工作時段），但終點必須是「從現在起還要多久」。若從 `actual_start` 加剩餘量，一個已耗盡工期的 task 會算出等於開工時間的結束時間。
+3. **手動勾完成的 task 沒有 `actual_start`，不要補。** 直接勾「完成」的人從未經過 `running`，系統並不知道工作何時開始；把 `actual_end` 回填進 `actual_start` 是記下一個不存在的事實，代價很實際：圖上畫出一條零長度的 bar（並把整個 phase 的摘要拉回勾選的那一刻），而 §8.6 的模板健檢會把這一步統計成「耗時 0 秒」。欄位保持 `NULL`，由 forward pass 在顯示時補上它原本被分配的工期。
 
 Case 的 `forecast_end` = 所有 task 的 `forecast_end` 最大值。健康度由 `forecast_end` 與 `target_date` 的關係決定（判定條件見 [design.md §8.1](design.md#81-健康度定義)）。
 

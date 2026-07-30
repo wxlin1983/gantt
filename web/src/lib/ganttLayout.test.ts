@@ -214,8 +214,21 @@ describe("axisTiers", () => {
 
   it("reads a fortnight as weeks over days", () => {
     const tiers = axisTiers(span(14));
-    expect(tiers.major[0]!.label).toMatch(/^W\d+$/);
+    // Weeks as the major tier name their month; "W1" alone cannot say which
+    expect(tiers.major[0]!.label).toMatch(/^\w+ W\d+$/);
     expect(tiers.minor[0]!.label).toMatch(/^\d+\/\d+$/);
+  });
+
+  it("never labels two adjacent weeks the same", () => {
+    // Numbering used to restart at 1 for whichever week the view opened on,
+    // so a fortnight straddling a month boundary read "W1 W1 W2"
+    const from = new Date("2026-07-29T00:00:00Z");
+    const labels = axisTiers({
+      from,
+      to: new Date(from.getTime() + 14 * 86_400_000),
+      width: 960,
+    }).major.map((tick) => tick.label);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 
   it("reads a couple of days as days over hours", () => {
@@ -267,6 +280,15 @@ describe("elbowPath", () => {
 
   it("turns downwards and upwards alike", () => {
     expect(elbowPath({ x: 0, y: 100 }, { x: 200, y: 10 })).toContain("V");
+  });
+
+  it("keeps the long run on the predecessor's row", () => {
+    // Turning early laid a chart-wide horizontal along the successor's row,
+    // where a line that long reads as a bar. The drop belongs beside the
+    // successor, leaving the run next to the bar it comes from.
+    const d = elbowPath({ x: 10, y: 10 }, { x: 800, y: 40 });
+    const firstRun = Number(d.split("H ")[1]!.split(" ")[0]);
+    expect(firstRun).toBeGreaterThan(700);
   });
 });
 

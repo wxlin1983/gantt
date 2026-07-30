@@ -28,6 +28,9 @@
 
   --radius: 6px;
   --row: 44px;
+  /* Pinned rather than left to its contents, so the drawer can sit exactly
+     beneath the topbar instead of over it. */
+  --topbar-h: 48px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -66,7 +69,8 @@ body {
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 10px 20px;
+  height: var(--topbar-h);
+  padding: 0 20px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   position: sticky;
@@ -695,10 +699,8 @@ textarea {
   fill: color-mix(in srgb, var(--hue, #8fb3c7) 80%, white);
 }
 
-.dep-lag {
-  stroke: var(--chart-muted);
-  stroke-width: 1;
-  stroke-dasharray: 2 3;
+.dep-line.is-lagged {
+  stroke-dasharray: 4 4;
 }
 
 .dep-lag-label {
@@ -745,25 +747,55 @@ textarea {
 
 /* --- drawer ------------------------------------------------------------- */
 
+/* Beneath the topbar, not behind it: sharing `top: 0` with a sticky bar of a
+   higher stacking order meant the bar painted over the drawer's own header,
+   taking the close button with it. Sitting below also keeps navigation and the
+   notification bell reachable while a task is open. */
 .drawer {
   position: fixed;
-  top: 0;
+  top: var(--topbar-h);
   right: 0;
   bottom: 0;
+  z-index: 20;
   width: 400px;
   max-width: 100vw;
   background: var(--surface);
   border-left: 1px solid var(--border);
-  padding: 16px;
+  padding: 0 16px 16px;
   overflow-y: auto;
-  box-shadow: -8px 0 24px rgb(0 0 0 / 8%);
+  box-shadow: -8px 0 24px rgb(0 0 0 / 18%);
 }
 
+/* Sticky so the way out stays on screen however far down the drawer is
+   scrolled -- the fields below can run well past a short window. */
 .drawer header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
+  padding: 14px 0 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer header button {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+}
+
+.drawer header button:hover {
+  background: var(--border);
+  color: var(--text);
 }
 
 .drawer h2 {
@@ -771,13 +803,6 @@ textarea {
   margin: 0;
 }
 
-.drawer header button {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 16px;
-}
 
 .drawer-fields {
   display: grid;

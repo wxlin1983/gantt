@@ -1,7 +1,7 @@
 /** Case detail: the Gantt plus the task drawer (design.md §4, §5, §7). */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError, api } from "../../api/client";
@@ -480,6 +480,18 @@ function TaskDrawer({
   const [hours, setHours] = useState(task.duration_seconds / 3600);
   const [note, setNote] = useState("");
   const changed = hours * 3600 !== task.duration_seconds;
+
+  // Escape closes it. The button is the obvious way out, but a panel that
+  // covers a third of the screen needs one that does not depend on finding
+  // anything.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const predecessors = detail.dependencies.filter(
     (edge) => edge.successor === task.name,
   );

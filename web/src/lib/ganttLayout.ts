@@ -229,8 +229,12 @@ export function axisTiers(viewport: Viewport): AxisTiers {
   const days =
     (viewport.to.getTime() - viewport.from.getTime()) / MS.day;
 
-  if (days > 45) return { major: months(viewport), minor: weeks(viewport) };
-  if (days > 8) return { major: weeks(viewport), minor: days_(viewport) };
+  if (days > 45) {
+    return { major: months(viewport), minor: weeks(viewport, false) };
+  }
+  if (days > 8) {
+    return { major: weeks(viewport, true), minor: days_(viewport) };
+  }
   return { major: days_(viewport), minor: hours(viewport, 6) };
 }
 
@@ -251,26 +255,30 @@ function months(viewport: Viewport): Tick[] {
   return out;
 }
 
-function weeks(viewport: Viewport): Tick[] {
+/**
+ * Weekly ticks, labelled by week of their own month.
+ *
+ * The number comes from the date rather than from a counter walking the view:
+ * counting restarted at 1 for whichever week the viewport happened to open on,
+ * so a fortnight straddling a month boundary was labelled "W1 W1 W2". When
+ * weeks are the major tier they carry the month too, since "W1" alone cannot
+ * say which month it belongs to.
+ */
+function weeks(viewport: Viewport, withMonth: boolean): Tick[] {
   const out: Tick[] = [];
   const cursor = new Date(viewport.from);
   cursor.setHours(0, 0, 0, 0);
   // Anchor on Monday so week numbering does not drift with the view.
   cursor.setDate(cursor.getDate() - ((cursor.getDay() + 6) % 7));
-  let index = 1;
-  let month = cursor.getMonth();
   while (cursor <= viewport.to) {
-    if (cursor.getMonth() !== month) {
-      month = cursor.getMonth();
-      index = 1;
-    }
+    const index = Math.floor((cursor.getDate() - 1) / 7) + 1;
+    const month = cursor.toLocaleDateString(undefined, { month: "short" });
     out.push({
       at: new Date(cursor),
       x: timeToX(viewport, cursor),
-      label: `W${index}`,
-      major: false,
+      label: withMonth ? `${month} W${index}` : `W${index}`,
+      major: withMonth,
     });
-    index += 1;
     cursor.setDate(cursor.getDate() + 7);
   }
   return out;
@@ -335,8 +343,13 @@ export function elbowPath(
   const step = dy > 0 ? radius : -radius;
 
   // Enough room to turn twice in the forward direction.
+  //
+  // The turn happens beside the *successor*, not just past the predecessor.
+  // Turning early put the long run on the successor's row, where a horizontal
+  // line the width of the chart reads as a bar; keeping it on the predecessor's
+  // row leaves it beside that bar, where it reads as "and then".
   if (to.x - from.x > stub + radius * 2) {
-    const turn = from.x + stub;
+    const turn = to.x - stub;
     return [
       `M ${from.x} ${from.y}`,
       `H ${turn - radius}`,
