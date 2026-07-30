@@ -87,6 +87,32 @@ class ScheduleMode(StrEnum):
     BUSINESS = "business"
 
 
+#: The always-open calendar. Named here rather than in the calendar service so
+#: that both the DSL and the services layer resolve a task's calendar the same
+#: way -- they used to decide independently, and disagreed.
+CONTINUOUS_CALENDAR = "continuous"
+
+#: What ``schedule_mode: business`` means when no calendar is named. Seeded on
+#: an empty database so the shorthand works out of the box.
+DEFAULT_BUSINESS_CALENDAR = "taiwan_office"
+
+
+def resolve_calendar(mode: ScheduleMode, calendar: str | None) -> str:
+    """The single rule for which calendar a task runs on.
+
+    ``calendar`` names one; ``schedule_mode`` is shorthand for "the office
+    one" when none is named. Treating the two as independent fields is what
+    made ``schedule_mode: business`` a no-op: its default calendar was
+    ``continuous``, so a task that asked for working hours was scheduled
+    around the clock and nothing said so.
+    """
+    if calendar:
+        return calendar
+    if mode is ScheduleMode.BUSINESS:
+        return DEFAULT_BUSINESS_CALENDAR
+    return CONTINUOUS_CALENDAR
+
+
 class FailurePolicy(StrEnum):
     BLOCK = "block"
     CONTINUE = "continue"
@@ -218,7 +244,9 @@ class TaskTemplate(_Base):
         validation_alias=_aliased("default_duration", TASK_TEMPLATE_ALIASES),
     )
     schedule_mode: ScheduleMode = ScheduleMode.CONTINUOUS
-    calendar: str = "continuous"
+    #: None means "not stated"; the effective calendar comes from
+    #: `resolve_calendar`, which is the only place that decides.
+    calendar: str | None = None
     default_owner: OwnerSpec | None = None
     warn_before: str | int = "2H"
     task_para: list[ParamDef] = Field(default_factory=list)

@@ -34,6 +34,7 @@ from .schema import (
     ScheduleMode,
     SkippedTask,
     TaskTemplate,
+    resolve_calendar,
 )
 
 
@@ -226,6 +227,10 @@ class _Expansion:
             owner_spec, ctx, node
         )
 
+        mode = node.schedule_mode or (
+            source.schedule_mode if source else ScheduleMode.CONTINUOUS
+        )
+
         return ExpandedTask(
             id=node.id,
             label=str(label),
@@ -235,10 +240,10 @@ class _Expansion:
             group=str(evaluate(node.group, "group") or ""),
             duration_seconds=duration_seconds,
             duration_days=duration_days,
-            schedule_mode=node.schedule_mode
-            or (source.schedule_mode if source else ScheduleMode.CONTINUOUS),
-            calendar=node.calendar
-            or (source.calendar if source else "continuous"),
+            schedule_mode=mode,
+            calendar=resolve_calendar(
+                mode, node.calendar or (source.calendar if source else None)
+            ),
             params=params,
             task_api=source.task_api if source else "",
             api_mode=source.api_mode if source else None,

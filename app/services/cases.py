@@ -22,7 +22,7 @@ from app.dsl.duration import parse_duration
 from app.dsl.errors import DslError
 from app.dsl.expansion import expand
 from app.dsl.graph import find_cycle
-from app.dsl.schema import ExpansionResult
+from app.dsl.schema import ExpansionResult, ScheduleMode, resolve_calendar
 from app.models import (
     AuditEvent,
     CaseHealth,
@@ -119,15 +119,16 @@ class ScheduleInput:
 def _calendar_name(task: CaseTask, snapshot_calendars: dict) -> str:
     """Which calendar a task uses.
 
-    ``schedule_mode`` is the DSL-level choice; the named calendar only applies
-    in business mode, so a continuous task cannot accidentally inherit office
-    hours.
+    Defers to the same rule the expansion uses, so a case's forecast is
+    computed on the calendar its baseline was planned with. These were two
+    separate pieces of logic and they disagreed: this one forced a continuous
+    task onto 24x7 even when it named an office calendar, while the expansion
+    honoured the name.
     """
-    if task.schedule_mode != "business":
-        return calendar_service.BUILTIN_CONTINUOUS
-    return task.api_config.get("calendar") or calendar_service.DEFAULT_OFFICE[
-        "name"
-    ]
+    return resolve_calendar(
+        ScheduleMode(task.schedule_mode),
+        (task.api_config or {}).get("calendar"),
+    )
 
 
 async def build_schedule_input(

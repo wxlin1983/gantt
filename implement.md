@@ -587,6 +587,18 @@ task:
 
 不支援複合寫法（`1D12H`）。需要時寫成 `36H`。
 
+#### `schedule_mode` 與 `calendar` 的關係
+
+兩個欄位表達的是同一件事，解析規則只有一條（`app/dsl/schema.py` 的 `resolve_calendar`）：
+
+1. 有寫 `calendar:` → 用它，`schedule_mode` 不再影響選擇。
+2. 沒寫 `calendar:` 且 `schedule_mode: business` → 用預設辦公行事曆 `taiwan_office`。
+3. 其餘 → `continuous`。
+
+也就是說 **`schedule_mode` 是「哪一份行事曆」的簡寫，不是獨立開關**。這條規則同時被建立 case 的展開流程與之後每次重算使用；先前兩邊各自判斷，結果不一致：展開端把 `calendar` 的預設值寫死為 `continuous`，所以只宣告 `schedule_mode: business` 而沒有指名行事曆的任務被排成 24×7——宣告了工時卻完全沒有生效，而且沒有任何訊息。重算端則相反，會把明明指名了辦公行事曆、但 `schedule_mode` 仍是 `continuous` 的任務強制拉回 24×7，使同一個 case 的 baseline 與 forecast 用不同基準計算。
+
+既有 case 不受影響：行事曆名稱在建立時就寫進快照，這正是快照隔離要保證的事（§4.8）。
+
 ### 4.6 `api_mode` 三種模式
 
 | 模式 | 行為 |
@@ -898,7 +910,18 @@ class Calendar(Protocol):
 - **`ContinuousCalendar`** — `add` / `sub` 即單純的加減，`next_working_instant` 恆等。
 - **`BusinessCalendar`** — 依 `working_hours` 與 `holidays` 逐區段累加/扣減。為避免逐分鐘迴圈，實作以「日」為單位跳躍：先計算需要跨越幾個完整工作日，再處理首尾不完整的區段。跨年度的假日查詢以 set 快取。
 
-每個 task 各自持有 Calendar 實例（依 `schedule_mode` / `calendar_id`），因此**同一個 case 內不同 task 可用不同計算基準**。
+每個 task 各自持有 Calendar 實例（依 §4.5 的 `resolve_calendar`），因此**同一個 case 內不同 task 可用不同計算基準**。
+
+**所有時間運算一律在 UTC 上進行，只有「哪一天、哪個工作區間」才換算回當地時間。** 這不是風格偏好。Python 明文規定：兩個 aware datetime 若共用同一個 `tzinfo`，相減會**忽略時區位移**，直接以牆上時鐘計算。而所有工作區間端點都由同一個 `ZoneInfo` 產生，因此區間長度一旦用當地時間相減，在時區轉換當天就是錯的——夏令時間往前撥的那天，09:00–18:00 只有 8 小時實際時間，卻會被算成 9 小時。`add` / `sub` / `elapsed` / 兩個 snapping 函式全部受影響，方向是「憑空多出或少掉一小時的工時」。
+
+```python
+>>> a = datetime(2026, 3, 8, 0, 0, tzinfo=ZoneInfo("America/New_York"))
+>>> b = datetime(2026, 3, 8, 6, 0, tzinfo=ZoneInfo("America/New_York"))
+>>> (b - a).total_seconds() / 3600          # 6.0，錯
+>>> (b.astimezone(UTC) - a.astimezone(UTC)).total_seconds() / 3600   # 5.0
+```
+
+`day_seconds`（`1D` 的換算基準）刻意維持名目長度：它是「一個工作天算幾小時」的常數，不隨個別日期伸縮。
 
 ### 5.2 Backward Pass（計算 baseline）
 

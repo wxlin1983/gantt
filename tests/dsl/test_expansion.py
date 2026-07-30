@@ -6,7 +6,7 @@ import pytest
 
 from app.dsl.errors import DslError
 from app.dsl.expansion import expand
-from app.dsl.loader import parse_gantt_template
+from app.dsl.loader import parse_gantt_template, parse_task_template
 
 from .conftest import ORIGINAL_TEMPLATE, edges_of, ids_of, run
 
@@ -318,3 +318,69 @@ class TestDeterminism:
         ] == [
             (e.predecessor, e.successor, e.lag_seconds) for e in second.edges
         ]
+
+
+class TestCalendarResolution:
+    """`schedule_mode` and `calendar` express one intent (implement.md §4.5).
+
+    They were two independent fields with contradictory defaults, so a task
+    asking for business hours and not naming a calendar got `continuous` --
+    scheduled around the clock, silently.
+    """
+
+    def test_business_without_a_calendar_gets_the_office_one(
+        self, task_templates
+    ):
+        result = run(
+            [{"id": "a", "duration": "1H", "schedule_mode": "business"}],
+            task_templates,
+        )
+        assert result.tasks[0].calendar == "taiwan_office"
+
+    def test_continuous_stays_continuous(self, task_templates):
+        result = run([{"id": "a", "duration": "1H"}], task_templates)
+        assert result.tasks[0].calendar == "continuous"
+
+    def test_a_named_calendar_always_wins(self, task_templates):
+        result = run(
+            [
+                {
+                    "id": "a",
+                    "duration": "1H",
+                    "schedule_mode": "business",
+                    "calendar": "berlin_office",
+                }
+            ],
+            task_templates,
+        )
+        assert result.tasks[0].calendar == "berlin_office"
+
+    def test_the_task_template_can_carry_the_mode(self):
+        # The seeded `tt_review` does exactly this, which is how the demo
+        # case ended up with four tasks planned around the clock
+        templates = {
+            "tt": parse_task_template(
+                {
+                    "id": "tt",
+                    "default_duration": "1H",
+                    "schedule_mode": "business",
+                }
+            )
+        }
+        result = run([{"id": "a", "uses": "tt"}], templates)
+        assert result.tasks[0].calendar == "taiwan_office"
+
+    def test_a_node_may_override_back_to_continuous(self, task_templates):
+        templates = dict(task_templates)
+        templates["tt1"] = parse_task_template(
+            {
+                "id": "tt1",
+                "default_duration": "1H",
+                "schedule_mode": "business",
+            }
+        )
+        result = run(
+            [{"id": "a", "uses": "tt1", "schedule_mode": "continuous"}],
+            templates,
+        )
+        assert result.tasks[0].calendar == "continuous"

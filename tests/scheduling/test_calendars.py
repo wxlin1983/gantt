@@ -9,33 +9,60 @@ tests are the real safety net and the explicit cases document intent.
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.scheduling import CONTINUOUS, BusinessCalendar, office_calendar
 from app.scheduling.calendars import CalendarError
 
-from .conftest import TW, at, hhmm
+from .conftest import at, hhmm
+
+STEP = 60
 
 
-def working_seconds_reference(calendar, start, seconds):
+def _is_working(calendar, moment):
+    """Half-open: the instant a window closes is no longer working time."""
+    local = moment.astimezone(calendar.tz)
+    return any(
+        calendar._at(local.date(), begins)
+        <= local
+        < calendar._at(local.date(), ends)
+        for begins, ends in calendar.segments_on(local.date())
+    )
+
+
+def forward_reference(calendar, start, seconds):
     """Advance one minute at a time, counting only working minutes."""
-    step = 60
-    remaining = seconds
-    cursor = start
+    remaining, cursor = seconds, start
     while remaining > 0:
-        local = cursor.astimezone(TW)
-        inside = any(
-            calendar._at(local.date(), begins)
-            <= local
-            < calendar._at(local.date(), ends)
-            for begins, ends in calendar.segments_on(local.date())
-        )
-        if inside:
-            remaining -= step
-        cursor += timedelta(seconds=step)
+        if _is_working(calendar, cursor):
+            remaining -= STEP
+        cursor += timedelta(seconds=STEP)
     return cursor
+
+
+def backward_reference(calendar, end, seconds):
+    """Retreat one minute at a time. Written independently of the above."""
+    remaining, cursor = seconds, end
+    while remaining > 0:
+        cursor -= timedelta(seconds=STEP)
+        if _is_working(calendar, cursor):
+            remaining -= STEP
+    return cursor
+
+
+def elapsed_reference(calendar, start, end):
+    total, cursor = 0, start
+    while cursor < end:
+        if _is_working(calendar, cursor):
+            total += STEP
+        cursor += timedelta(seconds=STEP)
+    return total
+
+
+#: Kept under its old name for the explicit cases that still call it.
+working_seconds_reference = forward_reference
 
 
 class TestContinuous:
@@ -235,6 +262,124 @@ class TestAgainstReference:
             seconds = random.randrange(1, 40) * 3600
             start = calendar.next_working_instant(base)
             assert calendar.sub(calendar.add(start, seconds), seconds) == start
+
+    def test_sub_matches_its_own_backward_reference(self):
+        """Not just the inverse of add.
+
+        A sign error applied symmetrically to both would satisfy the inverse
+        property while getting every absolute answer wrong, so `sub` is also
+        checked against a stepper that knows nothing about `add`.
+        """
+        calendar = office_calendar(holidays=["2026-08-17"])
+        random.seed(13)
+        for _ in range(120):
+            base = at("2026-08-01 00:00") + timedelta(
+                minutes=random.randrange(0, 60 * 24 * 60)
+            )
+            seconds = random.randrange(1, 400) * 60
+            end = calendar.previous_working_instant(base)
+            assert calendar.sub(base, seconds) == backward_reference(
+                calendar, end, seconds
+            )
+
+    def test_elapsed_matches_a_minute_counting_reference(self):
+        calendar = office_calendar(holidays=["2026-08-17"])
+        random.seed(17)
+        for _ in range(80):
+            start = at("2026-08-01 00:00") + timedelta(
+                minutes=random.randrange(0, 60 * 24 * 40)
+            )
+            end = start + timedelta(minutes=random.randrange(1, 60 * 24 * 8))
+            assert calendar.elapsed(start, end) == elapsed_reference(
+                calendar, start, end
+            )
+
+
+class TestDaylightSaving:
+    """Zones that shift, which the arithmetic must measure in real time.
+
+    Python subtracts two aware datetimes sharing a ``tzinfo`` naively -- the
+    documented behaviour is that the common offset is ignored -- and every
+    window boundary is built from one ``ZoneInfo``. Left in local time the
+    calendar counted wall-clock hours, so a nine-hour day reported nine hours
+    on the morning its zone sprang forward and only eight had passed.
+    """
+
+    @staticmethod
+    def night_shift(timezone: str) -> BusinessCalendar:
+        """Midnight to six, so the window contains the transition itself."""
+        return BusinessCalendar(
+            "nights",
+            {
+                day: [["00:00", "06:00"]]
+                for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+            },
+            timezone=timezone,
+        )
+
+    def test_spring_forward_day_is_an_hour_shorter(self):
+        # New York moves 02:00 -> 03:00 on 2026-03-08, so the 00:00-06:00
+        # window holds five hours of real time, not six
+        calendar = self.night_shift("America/New_York")
+        midnight = datetime(2026, 3, 8, 5, tzinfo=UTC)  # 00:00 EST
+        assert calendar.elapsed(midnight, midnight + timedelta(hours=6)) == (
+            5 * 3600
+        )
+
+    def test_autumn_back_day_is_an_hour_longer(self):
+        # And 01:00 -> 00:00 on 2026-11-01 gives that window seven
+        calendar = self.night_shift("America/New_York")
+        midnight = datetime(2026, 11, 1, 4, tzinfo=UTC)  # 00:00 EDT
+        assert calendar.elapsed(midnight, midnight + timedelta(hours=8)) == (
+            7 * 3600
+        )
+
+    def test_add_crosses_a_transition_in_real_time(self):
+        calendar = self.night_shift("America/New_York")
+        start = datetime(2026, 3, 8, 5, tzinfo=UTC)
+        # Five hours is all that day has left, so the sixth lands next day
+        assert calendar.add(start, 6 * 3600) == datetime(
+            2026, 3, 9, 5, tzinfo=UTC
+        )
+
+    def test_sub_crosses_a_transition_in_real_time(self):
+        calendar = self.night_shift("America/New_York")
+        end = datetime(2026, 3, 8, 10, tzinfo=UTC)  # 06:00 EDT
+        assert calendar.sub(end, 6 * 3600) == datetime(
+            2026, 3, 7, 10, tzinfo=UTC
+        )
+
+    @pytest.mark.parametrize(
+        "timezone",
+        [
+            "America/New_York",
+            "Europe/London",
+            "Australia/Sydney",
+            # A 30-minute shift on a half-hour base offset
+            "Australia/Lord_Howe",
+        ],
+    )
+    def test_add_matches_the_reference_across_transitions(self, timezone):
+        calendar = self.night_shift(timezone)
+        random.seed(19)
+        for base in (
+            datetime(2026, 3, 1, tzinfo=UTC),
+            datetime(2026, 10, 22, tzinfo=UTC),
+        ):
+            for _ in range(20):
+                start = base + timedelta(
+                    minutes=random.randrange(0, 60 * 24 * 14)
+                )
+                seconds = random.randrange(1, 400) * 60
+                snapped = calendar.next_working_instant(start)
+                assert calendar.add(start, seconds) == forward_reference(
+                    calendar, snapped, seconds
+                )
+                # Consuming n working seconds must measure back as n
+                assert (
+                    calendar.elapsed(snapped, calendar.add(start, seconds))
+                    == seconds
+                )
 
 
 class TestDegenerateCalendars:

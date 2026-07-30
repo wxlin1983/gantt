@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
@@ -225,23 +225,37 @@ class BusinessCalendar:
         return datetime.combine(day, moment, tzinfo=self.tz)
 
     def _windows(self, day: date) -> list[tuple[datetime, datetime]]:
+        """Working windows for a local day, as absolute instants.
+
+        Returned in UTC because every caller subtracts them. Python subtracts
+        two aware datetimes that share a ``tzinfo`` *naively* -- it documents
+        that the common offset is ignored -- and every boundary here is built
+        from the same ``ZoneInfo``. Left in local time, a nominal 09:00-18:00
+        window reported nine hours on the day its zone sprang forward, when
+        only eight had passed. Taipei has no DST so nothing in production
+        drifted, but the DSL lets a template name any zone.
+        """
         return [
-            (self._at(day, begins), self._at(day, ends))
+            (
+                self._at(day, begins).astimezone(UTC),
+                self._at(day, ends).astimezone(UTC),
+            )
             for begins, ends in self.segments_on(day)
         ]
 
     # -- boundary snapping -------------------------------------------------
 
     def next_working_instant(self, t: datetime) -> datetime:
+        moment = _require_aware(t, "t").astimezone(UTC)
         local = self._local(t)
         for offset in range(MAX_DAYS_WALK):
             day = local.date() + timedelta(days=offset)
             for begins, ends in self._windows(day):
                 # Windows are closed at both ends: finishing exactly at 18:00
                 # is legitimate, and add() simply finds no time left there.
-                if offset == 0 and begins <= local <= ends:
+                if offset == 0 and begins <= moment <= ends:
                     return t
-                if begins > local:
+                if begins > moment:
                     return begins.astimezone(t.tzinfo)
         raise CalendarError(
             f"{self.name} has no working time within {MAX_DAYS_WALK} days "
@@ -249,13 +263,14 @@ class BusinessCalendar:
         )
 
     def previous_working_instant(self, t: datetime) -> datetime:
+        moment = _require_aware(t, "t").astimezone(UTC)
         local = self._local(t)
         for offset in range(MAX_DAYS_WALK):
             day = local.date() - timedelta(days=offset)
             for begins, ends in reversed(self._windows(day)):
-                if offset == 0 and begins <= local <= ends:
+                if offset == 0 and begins <= moment <= ends:
                     return t
-                if ends < local:
+                if ends < moment:
                     return ends.astimezone(t.tzinfo)
         raise CalendarError(
             f"{self.name} has no working time within {MAX_DAYS_WALK} days "
@@ -267,14 +282,17 @@ class BusinessCalendar:
     def add(self, start: datetime, seconds: int) -> datetime:
         if seconds < 0:
             raise ValueError("seconds must not be negative")
-        cursor = self._local(self.next_working_instant(start))
+        snapped = self.next_working_instant(start)
         if seconds == 0:
-            return cursor.astimezone(start.tzinfo)
+            return snapped.astimezone(start.tzinfo)
 
+        # The walk runs on absolute instants; only the day boundaries are
+        # local. Mixing the two is what let wall-clock arithmetic in.
+        cursor = snapped.astimezone(UTC)
         remaining = seconds
         # `day` walks independently of `cursor`; deriving one from the other
         # would advance twice per iteration.
-        day = cursor.date()
+        day = self._local(snapped).date()
         for _ in range(MAX_DAYS_WALK):
             for begins, ends in self._windows(day):
                 if cursor >= ends:
@@ -288,7 +306,7 @@ class BusinessCalendar:
                 remaining -= available
             # Continue from the top of the following day.
             day += timedelta(days=1)
-            cursor = self._at(day, time.min)
+            cursor = self._at(day, time.min).astimezone(UTC)
         raise CalendarError(
             f"{seconds}s of work does not fit within {MAX_DAYS_WALK} days "
             f"of {start.isoformat()} on calendar {self.name}"
@@ -297,12 +315,13 @@ class BusinessCalendar:
     def sub(self, end: datetime, seconds: int) -> datetime:
         if seconds < 0:
             raise ValueError("seconds must not be negative")
-        cursor = self._local(self.previous_working_instant(end))
+        snapped = self.previous_working_instant(end)
         if seconds == 0:
-            return cursor.astimezone(end.tzinfo)
+            return snapped.astimezone(end.tzinfo)
 
+        cursor = snapped.astimezone(UTC)
         remaining = seconds
-        day = cursor.date()
+        day = self._local(snapped).date()
         for _ in range(MAX_DAYS_WALK):
             for begins, ends in reversed(self._windows(day)):
                 if cursor <= begins:
@@ -317,7 +336,7 @@ class BusinessCalendar:
             # Continue from the very end of the previous day, so every one of
             # its windows is still available.
             day -= timedelta(days=1)
-            cursor = self._at(day, time.max)
+            cursor = self._at(day, time.max).astimezone(UTC)
         raise CalendarError(
             f"{seconds}s of work does not fit within {MAX_DAYS_WALK} days "
             f"before {end.isoformat()} on calendar {self.name}"
@@ -330,15 +349,16 @@ class BusinessCalendar:
         clock elapsed would charge a task 48 hours of progress for sitting
         over a weekend.
         """
-        first = self._local(start)
-        last = self._local(end)
+        first = _require_aware(start, "start").astimezone(UTC)
+        last = _require_aware(end, "end").astimezone(UTC)
         if last <= first:
             return 0
 
         total = 0
-        day = first.date()
+        day = self._local(start).date()
+        final_day = self._local(end).date()
         for _ in range(MAX_DAYS_WALK):
-            if day > last.date():
+            if day > final_day:
                 return total
             for begins, ends in self._windows(day):
                 overlap = min(ends, last) - max(begins, first)
