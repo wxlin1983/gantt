@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.auth.passwords import hash_password
+from app.config import get_settings
 from app.models import (
     Base,
     GanttTemplateRecord,
@@ -29,6 +31,20 @@ from app.models import (
     User,
 )
 from app.services import calendars as calendar_service
+
+
+@pytest.fixture(autouse=True)
+def session_secret(monkeypatch):
+    """Give the suite a real secret.
+
+    Credential encryption refuses to run with the default value, which is the
+    behaviour we want in production and therefore also what the tests must
+    satisfy rather than bypass.
+    """
+    monkeypatch.setenv("SESSION_SECRET", "test-secret-not-for-production")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest_asyncio.fixture

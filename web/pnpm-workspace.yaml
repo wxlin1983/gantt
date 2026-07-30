@@ -1,0 +1,4 @@
+# pnpm 11 reads build-script approval from here, not package.json.
+# esbuild ships a prebuilt binary and Vite/Vitest cannot start without it.
+allowBuilds:
+  esbuild: true

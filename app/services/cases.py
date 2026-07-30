@@ -470,7 +470,7 @@ async def _apply_baseline(
 
 async def complete_task(
     session: AsyncSession,
-    actor: User,
+    actor: User | None,
     case: GanttCase,
     task: CaseTask,
     *,
@@ -503,7 +503,8 @@ async def complete_task(
     task.actual_start = task.actual_start or finished
     task.actual_end = finished
     task.completion_source = source
-    task.completed_by_id = actor.id
+    # NULL actor means the system acted, not a person.
+    task.completed_by_id = actor.id if actor else None
     task.completion_note = note
     task.version += 1
     await session.flush()
@@ -532,7 +533,10 @@ async def complete_task(
 
 
 async def _close_if_finished(
-    session: AsyncSession, case: GanttCase, actor: User, moment: datetime
+    session: AsyncSession,
+    case: GanttCase,
+    actor: User | None,
+    moment: datetime,
 ) -> None:
     """Complete the case once every required task is settled (§4.12).
 
@@ -628,7 +632,10 @@ async def update_task(
 
 
 async def cancel(
-    session: AsyncSession, actor: User, case: GanttCase, note: str = ""
+    session: AsyncSession,
+    actor: User | None,
+    case: GanttCase,
+    note: str = "",
 ) -> None:
     if case.status is not CaseStatus.ACTIVE:
         raise CaseError(

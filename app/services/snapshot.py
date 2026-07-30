@@ -27,18 +27,24 @@ class SnapshotError(Exception):
 
 
 def task_template_to_dsl(row: TaskTemplateRecord) -> dict[str, Any]:
-    """Render a stored task template back into DSL form."""
+    """Render a stored task template back into DSL form.
+
+    Enum columns are coerced to plain strings. They are ``StrEnum``, so JSON
+    accepts them silently, but ``yaml.safe_dump`` refuses to represent them --
+    which would break template export. Normalising at the source keeps the
+    snapshot and the export byte-identical in what they contain.
+    """
     return {
         "id": row.name,
         "label": row.display_name or "",
         "default_duration": row.duration_default,
-        "schedule_mode": row.schedule_mode,
+        "schedule_mode": str(row.schedule_mode),
         "task_para": row.para_schema or [],
         "task_api": row.task_api or "",
-        "api_mode": row.api_mode,
+        "api_mode": str(row.api_mode) if row.api_mode else None,
         "api_config": row.api_config or {},
         "allow_manual_override": row.allow_manual_override,
-        "on_failure": row.on_failure,
+        "on_failure": str(row.on_failure),
     }
 
 

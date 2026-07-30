@@ -1,0 +1,826 @@
+/**
+ * Design tokens and layout (design.md §12).
+ *
+ * Status is never carried by colour alone -- every state also has a glyph and a
+ * label -- so the palette can be swapped without losing meaning, and the UI
+ * stays readable for colour-blind users and in print.
+ */
+
+:root {
+  --bg: #fbfbfd;
+  --surface: #ffffff;
+  --border: #e3e5ea;
+  --text: #16181d;
+  --muted: #6b7280;
+
+  --primary: #2563eb;
+  --primary-soft: #dbeafe;
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --warning: #b45309;
+  --warning-soft: #fef3c7;
+  --danger: #b91c1c;
+  --danger-soft: #fee2e2;
+
+  /* Baseline is deliberately desaturated so the forecast reads as the live
+     value and the plan as the reference behind it. */
+  --baseline: #b6c2d9;
+
+  --radius: 6px;
+  --row: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115;
+    --surface: #171a20;
+    --border: #2a2f39;
+    --text: #e8eaee;
+    --muted: #98a1b0;
+    --primary: #60a5fa;
+    --primary-soft: #1e3a5f;
+    --success: #4ade80;
+    --success-soft: #14351f;
+    --warning: #fbbf24;
+    --warning-soft: #3d2c07;
+    --danger: #f87171;
+    --danger-soft: #401616;
+    --baseline: #47536b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* --- shell --------------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.brand {
+  font-weight: 700;
+}
+
+.topbar a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.topbar a.active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.page {
+  padding: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.page.narrow {
+  max-width: 720px;
+}
+
+.page-head,
+.case-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+
+h3,
+h4 {
+  margin: 18px 0 8px;
+  font-size: 14px;
+}
+
+.back {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.strong {
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.tone-success {
+  color: var(--success);
+}
+.tone-warning {
+  color: var(--warning);
+}
+.tone-danger {
+  color: var(--danger);
+}
+.tone-neutral,
+.tone-primary {
+  color: var(--primary);
+}
+
+/* --- controls ------------------------------------------------------------ */
+
+.button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.button.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.button.small {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+/* A visible focus ring is required for keyboard navigation (design.md §13). */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segmented button {
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 6px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.segmented button.active {
+  background: var(--primary-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.toolbar,
+.filters,
+.wizard-nav {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 14px 0;
+  flex-wrap: wrap;
+}
+
+.checkbox {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+
+.form {
+  display: grid;
+  gap: 14px;
+  max-width: 560px;
+}
+
+.form label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.form label input,
+.form label select,
+.form label textarea {
+  color: var(--text);
+}
+
+/* --- counters and tables ------------------------------------------------- */
+
+.counters {
+  display: flex;
+  gap: 10px;
+  margin: 16px 0;
+  flex-wrap: wrap;
+}
+
+.counter {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 8px 16px;
+  display: grid;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.counter strong {
+  font-size: 20px;
+}
+
+.counter span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.counter.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.table th {
+  text-align: left;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.table.compact td {
+  padding: 5px 10px;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.bar-track {
+  height: 5px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 90px;
+}
+
+.bar-fill {
+  height: 100%;
+  background: var(--primary);
+}
+
+.pill,
+.badge,
+.chip {
+  display: inline-block;
+  border-radius: 999px;
+  font-size: 11px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.chip {
+  font-size: 13px;
+  padding: 4px 12px;
+}
+
+.badge-critical {
+  border-color: var(--danger);
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.banner {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 12px 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.banner.tone-success {
+  border-color: var(--success);
+  background: var(--success-soft);
+}
+.banner.tone-warning {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+}
+.banner.tone-danger {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.empty {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+}
+
+.card.selected {
+  border-color: var(--primary);
+}
+
+.steps {
+  display: flex;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.steps li::after {
+  content: "›";
+  margin-left: 8px;
+}
+
+.steps li:last-child::after {
+  content: "";
+}
+
+.steps li.active {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.steps li.done {
+  color: var(--success);
+}
+
+/* --- statuses ------------------------------------------------------------ */
+
+.status {
+  font-variant-emoji: text;
+}
+
+.status-pending,
+.status-cancelled {
+  color: var(--muted);
+}
+.status-ready,
+.status-running {
+  color: var(--primary);
+}
+.status-done {
+  color: var(--success);
+}
+.status-failed {
+  color: var(--danger);
+}
+
+.dot {
+  font-size: 12px;
+}
+
+/* --- gantt -------------------------------------------------------------- */
+
+.gantt {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.gantt-rail {
+  flex: 0 0 auto;
+  border-right: 1px solid var(--border);
+}
+
+.gantt-phase {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: var(--bg);
+}
+
+.gantt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  padding: 0 10px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.gantt-row:hover,
+.gantt-row.selected {
+  background: var(--primary-soft);
+}
+
+.gantt-row.dimmed {
+  opacity: 0.3;
+}
+
+.gantt-row-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-row-index {
+  display: none;
+}
+
+.gantt-canvas {
+  flex: 1;
+  overflow-x: auto;
+}
+
+.tick-label {
+  font-size: 10px;
+  fill: var(--muted);
+}
+
+.tick-minor {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.tick-major {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.bar {
+  fill: var(--primary);
+}
+
+.bar-baseline {
+  fill: var(--baseline);
+}
+
+.bar-pending {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.bar-ready,
+.bar-running {
+  fill: var(--primary);
+}
+.bar-done {
+  fill: var(--success);
+}
+.bar-failed {
+  fill: var(--danger);
+}
+.bar-cancelled {
+  fill: var(--muted);
+  opacity: 0.4;
+}
+
+/* Optional tasks get a dashed outline, matching the ◇ glyph in the rail. */
+.bar-optional {
+  stroke: var(--muted);
+  stroke-dasharray: 3 2;
+}
+
+.bar-late {
+  stroke: var(--warning);
+  stroke-width: 1.5;
+}
+
+.bars.critical .bar-baseline {
+  stroke: var(--danger);
+  stroke-width: 1;
+}
+
+.bars.dimmed {
+  opacity: 0.25;
+}
+
+.delta {
+  font-size: 10px;
+  fill: var(--muted);
+}
+
+.delta-late {
+  fill: var(--danger);
+  font-weight: 600;
+}
+
+.dep-line {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.2;
+}
+
+.dep circle {
+  fill: var(--muted);
+}
+
+/* Lag is waiting, not work, so it must not look like a solid bar. */
+.dep-lag {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.dep-lag-label {
+  font-size: 9px;
+  fill: var(--muted);
+  text-anchor: middle;
+}
+
+.dep.dimmed {
+  opacity: 0.15;
+}
+
+.buffer-block {
+  fill: var(--warning-soft);
+  opacity: 0.5;
+}
+
+.buffer-consumed {
+  fill: var(--danger-soft);
+  opacity: 0.7;
+}
+
+.buffer-label {
+  font-size: 9px;
+  fill: var(--warning);
+}
+
+.marker-now line {
+  stroke: var(--primary);
+  stroke-width: 1.5;
+}
+.marker-now text,
+.marker-target text,
+.marker-original text {
+  font-size: 9px;
+  fill: var(--muted);
+}
+.marker-target line {
+  stroke: var(--danger);
+  stroke-width: 1.5;
+}
+.marker-original line {
+  stroke: var(--muted);
+  stroke-dasharray: 4 3;
+}
+
+/* --- drawer ------------------------------------------------------------- */
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 400px;
+  max-width: 100vw;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  box-shadow: -8px 0 24px rgb(0 0 0 / 8%);
+}
+
+.drawer header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.drawer h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.drawer header button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.drawer-fields {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 8px 12px;
+  margin: 18px 0;
+  font-size: 13px;
+}
+
+.drawer-fields dt {
+  color: var(--muted);
+}
+
+.drawer-fields dd {
+  margin: 0;
+}
+
+.drawer-action {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.drawer-action label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* --- misc --------------------------------------------------------------- */
+
+.case-metrics {
+  display: flex;
+  gap: 32px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.case-metrics > div {
+  display: grid;
+  gap: 3px;
+}
+
+.task-feed {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.task-feed li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.task-feed li.late {
+  border-color: var(--warning);
+}
+
+.source-editor {
+  width: 100%;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.validation,
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px;
+  margin: 14px 0;
+}
+
+.validation p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+/* Narrow screens: the Gantt becomes unusable, so the list view is the target
+   experience and the drawer goes full width (design.md §13). */
+@media (max-width: 767px) {
+  .gantt-rail {
+    flex-basis: 150px;
+  }
+  .drawer {
+    width: 100vw;
+  }
+  .case-metrics {
+    gap: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

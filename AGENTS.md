@@ -53,11 +53,15 @@ app/
   cli.py        gantt expand / schedule / validate / seed
   config.py     設定；db.py 連線與 session
   scheduling/   排程引擎（純函式，不碰 DB）：calendars / passes / analysis
-  execution/    task 執行引擎與 handler registry ← 階段 5
+  execution/    執行引擎：registry / handlers / queue / runner / scans / worker
+  notifications/ 通知建立與外送管道
 migrations/     Alembic
 examples/       可直接跑的範例模板
 tests/          對應 app/ 的結構
-web/            前端（package.json 與 pnpm-lock.yaml 放這裡）← 階段 4
+web/            前端（package.json 與 pnpm-lock.yaml 放這裡）
+  src/lib/      ganttLayout（純佈局數學，有 vitest）、format
+  src/components/gantt/  自建 SVG Gantt
+  src/features/ cases / templates / auth
 ```
 
 ## 常用指令
@@ -82,6 +86,12 @@ uv run alembic revision --autogenerate -m "" # 產生遷移
 uv run gantt seed                            # 建立內建行事曆與第一個管理員
 
 uv run uvicorn app.api.main:app --reload     # 啟動 API（/api/v1/docs 有 Swagger）
+uv run python -m app.execution.worker        # 啟動 worker（觸發/輪詢/期限掃描）
+
+cd web && pnpm install
+pnpm dev                                     # 前端（proxy 到 localhost:8000）
+pnpm test                                    # vitest（佈局數學）
+pnpm typecheck && pnpm build
 ```
 
 `DATABASE_URL` 預設指向 PostgreSQL。沒有 Postgres 時可用
@@ -99,3 +109,7 @@ uv run uvicorn app.api.main:app --reload     # 啟動 API（/api/v1/docs 有 Swa
 - **所有時間欄位一律用 `TZDateTime`**（`UtcDateTime` TypeDecorator）。它會拒絕寫入 naive 值、並保證讀回來一定帶時區——PostgreSQL 的 TIMESTAMPTZ 本來就會，SQLite 不會，排程引擎則完全不接受 naive。
 - **enum 欄位一律用 `enum_type(...)`** 而非 `String`。用 `String` 時值會以純字串讀回，任何 `is SomeEnum.MEMBER` 比較都會無聲失敗（不是報錯，是靜靜走錯分支）。
 - 每個會改動日期的操作都要走「鎖定 case → 套用變更 → 全量重算 → 寫稽核」這個形狀，見 `app/services/cases.py`。
+- **enum 值要進 YAML 時必須 `str()`。** JSON 接受 `StrEnum`（它是 str 子類），`yaml.safe_dump` 會直接拋錯。模板匯出踩過這個坑，正規化在 `snapshot.task_template_to_dsl`。
+- **內建 handler 一律 fail closed。** `http_request` 的主機白名單預設為空（拒絕一切），`shell_command` 預設停用。這兩個是 SSRF 與 RCE 的原生型態，預設開放不能接受。
+- 通知的 `dedup_key` 必須含 `user_id` 與明確的 scope，見 `app/notifications/service.py` 的說明。
+- 前端的 pnpm 需要 `pnpm-workspace.yaml` 裡的 `allowBuilds: esbuild: true`（pnpm 11 不再讀 package.json 的 `pnpm` 欄位）。
