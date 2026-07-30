@@ -1847,15 +1847,22 @@ Case 總表的 `q` 參數搜尋三個範圍，以 PostgreSQL 全文檢索實作�
 
 ### 12.1 部署單元
 
+實作於 [docker-compose.yml](docker-compose.yml)：
+
 ```yaml
 services:
-  db:      postgres:15         # 持久化 volume
-  api:     uvicorn app.main:app --workers 4
-  worker:  python -m app.worker         # 可 scale 多份
-  web:     nginx 提供靜態檔 + 反向代理 /api 與 /ws
+  db:       postgres:15-alpine        # 持久化 volume + healthcheck
+  migrate:  alembic upgrade head      # 一次性，其餘服務等它成功才啟動
+  api:      uvicorn app.api.main:app --workers 4
+  worker:   python -m app.execution.worker   # 可 scale 多份
+  web:      nginx 提供 web/dist + 反向代理 /api
 ```
 
-`api` 與 `worker` 共用同一份程式碼映像，只是進入點不同。資料庫遷移以 Alembic 在部署前獨立執行。
+`api` 與 `worker` 共用同一份映像，只是指令不同——兩個程序跑的是同一份程式碼，分開建置只會製造走鐘的機會。
+
+**遷移是獨立的一次性服務**，而不是塞在 entrypoint 裡：後者會讓 api 與 worker 同時對同一個資料庫跑 alembic。`api` 與 `worker` 都以 `service_completed_successfully` 等它。
+
+映像以非 root 使用者執行。`SESSION_SECRET` 沒有預設值，compose 在未設定時直接拒絕啟動，因為它同時是 session 簽章金鑰與憑證加密金鑰的來源。
 
 ### 12.2 設定
 

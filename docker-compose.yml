@@ -1,0 +1,99 @@
+# Full stack: database, migrations, API, worker, web (implement.md §12.1).
+#
+# `api` and `worker` share one image and differ only in their command, so the
+# two processes cannot drift apart.
+
+name: gantt
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: gantt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gantt}
+      POSTGRES_DB: gantt
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Everything else waits on this: starting the API against a database
+      # that is still initialising just produces a confusing crash loop.
+      test: ["CMD-SHELL", "pg_isready -U gantt -d gantt"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: &database_url >-
+        postgresql+asyncpg://gantt:${POSTGRES_PASSWORD:-gantt}@db:5432/gantt
+      SESSION_SECRET: &session_secret ${SESSION_SECRET:?set SESSION_SECRET in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    # A one-shot service rather than an entrypoint step, so two processes can
+    # never run alembic against the same database at the same time.
+    restart: "no"
+
+  api:
+    build: .
+    command:
+      - uvicorn
+      - app.api.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "4"
+    environment:
+      DATABASE_URL: *database_url
+      SESSION_SECRET: *session_secret
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-Asia/Taipei}
+      # Empty means "refuse every outbound host". Populate it before expecting
+      # the http_request handler to reach anything.
+      HTTP_HANDLER_ALLOWED_HOSTS: ${HTTP_HANDLER_ALLOWED_HOSTS:-[]}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://localhost:8000/healthz')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.execution.worker"]
+    environment:
+      DATABASE_URL: *database_url
+      SESSION_SECRET: *session_secret
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-Asia/Taipei}
+      HTTP_HANDLER_ALLOWED_HOSTS: ${HTTP_HANDLER_ALLOWED_HOSTS:-[]}
+      SHELL_HANDLER_ENABLED: ${SHELL_HANDLER_ENABLED:-false}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Safe to scale: workers claim jobs with SELECT ... FOR UPDATE SKIP LOCKED,
+    # so `docker compose up --scale worker=3` needs no other change.
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  pgdata:

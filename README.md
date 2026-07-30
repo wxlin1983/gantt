@@ -19,14 +19,50 @@
 | Node.js | 20+ | 前端建置 |
 | [pnpm](https://pnpm.io/) | 10+ | 前端套件管理 |
 | PostgreSQL | 15+ | 正式環境資料庫（開發可用 SQLite） |
+| Docker | 一併安裝 Compose v2 | 選用，但是最省事的跑法 |
 
 **不要用 `pip` / `venv` / `poetry` / `npm` / `yarn`** —— 見 [AGENTS.md](AGENTS.md#套件管理)。
 
 ---
 
-## 五分鐘跑起來
+## 用 Docker 跑（建議）
 
-以下用 SQLite，不需要安裝 PostgreSQL。
+四個服務：PostgreSQL、一次性的資料庫遷移、API、worker、以及提供前端並反向代理 `/api` 的 nginx。`api` 與 `worker` 共用同一個映像，只有指令不同。
+
+```bash
+# 1. 建立 .env。SESSION_SECRET 沒有預設值，compose 會直接拒絕啟動
+cp .env.example .env
+python3 -c 'import secrets; print("SESSION_SECRET=" + secrets.token_urlsafe(32))' >> .env
+
+# 2. 建置並啟動
+docker compose up -d --build
+
+# 3. 建立內建行事曆與第一個管理員
+docker compose exec api gantt seed
+
+# 4. 匯入並發布一份範例模板
+docker compose exec api gantt import examples/product_launch.yaml \
+  -t examples/task_templates --publish
+```
+
+打開 http://localhost:8080 ，用第 3 步建立的帳號登入。
+
+```bash
+docker compose ps                       # 各服務狀態
+docker compose logs -f worker           # 看自動化任務被觸發
+docker compose up -d --scale worker=3   # worker 可直接水平擴充
+docker compose down                     # 停止（加 -v 連資料一起刪）
+```
+
+Worker 可以安全地開多份：它們用 `SELECT ... FOR UPDATE SKIP LOCKED` 搶工作，不需要任何其他設定。
+
+資料庫遷移是獨立的一次性服務，`api` 與 `worker` 都等它成功結束才啟動 —— 這樣兩個程序不會同時對同一個資料庫跑 alembic。
+
+---
+
+## 不用 Docker 跑
+
+以下用 SQLite，不需要安裝 PostgreSQL。適合開發後端或改排程引擎的時候。
 
 ```bash
 # 1. 安裝相依
@@ -138,19 +174,14 @@ cd web && pnpm typecheck
 
 ## 正式環境
 
-四個部署單元。`api` 與 `worker` 共用同一份程式碼映像，只是進入點不同。
+[docker-compose.yml](docker-compose.yml) 描述的就是正式環境的形狀，上線前要改的是這幾項：
 
-```
-db       postgres:15（持久化 volume）
-api      uvicorn app.api.main:app --workers 4
-worker   python -m app.execution.worker（可水平擴充）
-web      nginx 提供 web/dist 靜態檔，並反向代理 /api
-```
+- `.env` 的 `SESSION_SECRET` 與 `POSTGRES_PASSWORD` 換成真正的祕密
+- `HTTP_HANDLER_ALLOWED_HOSTS` 填入實際要連的主機（預設為空 = 拒絕一切）
+- nginx 前面擺 TLS，並把 `app/api/main.py` 的 session cookie 改成 `https_only=True`
+- PostgreSQL 換成受管服務或加上備份
 
-```bash
-uv run alembic upgrade head    # 部署前獨立執行
-cd web && pnpm build           # 產出 web/dist
-```
+映像以非 root 使用者執行。`shell_command` handler 即使停用也不該有 root 可用。
 
 沒有 Redis 或訊息佇列 —— 工作佇列直接建在 PostgreSQL（`SELECT ... FOR UPDATE SKIP LOCKED`）。這讓「任務狀態」與「佇列狀態」天然在同一個交易裡一致，也少一個要維運的服務。理由見 [implement.md §1](implement.md)。
 
@@ -172,7 +203,9 @@ app/
 migrations/      Alembic
 examples/        可直接跑的範例模板
 tests/           對應 app/ 的結構
-web/             前端（Vite + React + TS）
+web/             前端（Vite + React + TS），含自己的 Dockerfile 與 nginx.conf
+Dockerfile       後端映像（api 與 worker 共用）
+docker-compose.yml
 ```
 
 ## 實作進度
