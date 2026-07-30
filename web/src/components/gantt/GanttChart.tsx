@@ -18,7 +18,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CaseDetail, Task } from "../../api/types";
-import { STATUS_META, formatSpan, variance } from "../../lib/format";
+import {
+  STATUS_META,
+  formatSpan,
+  isInstant,
+  variance,
+} from "../../lib/format";
 import {
   BAR_HEIGHT,
   BASELINE_HEIGHT,
@@ -474,19 +479,30 @@ function TaskBars({
       onMouseLeave={() => onHover(null)}
       onClick={() => onSelect(task)}
     >
-      {task.forecast_start && task.forecast_end && (
-        <rect
-          x={timeToX(viewport, task.forecast_start)}
-          y={barY(row)}
-          width={spanWidth(
-            viewport,
-            task.forecast_start,
-            task.forecast_end,
-          )}
-          height={BAR_HEIGHT}
-          rx={BAR_HEIGHT / 2}
-          className="bar bar-task"
+      {/* A task ticked off without ever being started occupies no time we know
+          of, so it is drawn as a milestone. A bar would have to claim a
+          duration, and one of no width is simply invisible. */}
+      {isInstant(task) ? (
+        <Milestone
+          x={timeToX(viewport, task.forecast_end!)}
+          y={rowCentre(row)}
         />
+      ) : (
+        task.forecast_start &&
+        task.forecast_end && (
+          <rect
+            x={timeToX(viewport, task.forecast_start)}
+            y={barY(row)}
+            width={spanWidth(
+              viewport,
+              task.forecast_start,
+              task.forecast_end,
+            )}
+            height={BAR_HEIGHT}
+            rx={BAR_HEIGHT / 2}
+            className="bar bar-task"
+          />
+        )
       )}
 
       {/* No baseline means the task was inserted after the case began, so
@@ -513,6 +529,17 @@ function TaskBars({
         </text>
       )}
     </g>
+  );
+}
+
+/** A point in time rather than a span: the conventional Gantt diamond. */
+function Milestone({ x, y }: { x: number; y: number }) {
+  const r = BAR_HEIGHT / 2 + 1;
+  return (
+    <path
+      d={`M ${x} ${y - r} L ${x + r} ${y} L ${x} ${y + r} L ${x - r} ${y} Z`}
+      className="bar bar-milestone"
+    />
   );
 }
 

@@ -284,17 +284,20 @@ class TestForwardPassStates:
         result = forward_pass(tasks, edges, at("2026-08-14 12:00"))
         assert hhmm(result.start_of("b")) == "2026-08-14 12:00"
 
-    def test_task_ticked_off_without_a_start_keeps_its_length(self):
+    def test_task_ticked_off_without_a_start_is_an_instant(self):
         """Manual completion is the common case and records only an end.
 
-        Collapsing it to an instant drew a task that took no time at all, and
-        pulled its phase summary back to the moment somebody ticked the box.
+        We do not know when the work began, so no duration is credited to it:
+        that would assert a working window nobody reported. The chart draws
+        the instant as a milestone.
         """
         tasks = [task("t", 4, status=TaskStatus.DONE)]
         tasks[0].actual_end = at("2026-08-14 12:00")
         assert tasks[0].actual_start is None
         result = forward_pass(tasks, [], at("2026-08-14 12:00"))
-        assert hhmm(result.start_of("t")) == "2026-08-14 08:00"
+        assert result.start_of("t") == result.end_of("t") == at(
+            "2026-08-14 12:00"
+        )
 
     def test_a_real_start_time_always_wins(self):
         tasks = [task("t", 4, status=TaskStatus.DONE)]

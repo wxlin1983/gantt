@@ -96,6 +96,21 @@ export function isLateStart(
   return Date.now() > new Date(baselineStart).getTime();
 }
 
+/**
+ * A task the system knows finished but never saw start.
+ *
+ * Ticking a task off records only an end, so its forecast collapses to a
+ * point. It is a milestone rather than a bar, and printing it as a range
+ * would read as a working window nobody reported.
+ */
+export function isInstant(task: {
+  forecast_start: string | null;
+  forecast_end: string | null;
+}): boolean {
+  if (!task.forecast_start || !task.forecast_end) return false;
+  return Date.parse(task.forecast_start) === Date.parse(task.forecast_end);
+}
+
 export function variance(task: {
   baseline_end: string | null;
   forecast_end: string | null;

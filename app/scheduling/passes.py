@@ -121,17 +121,16 @@ def forward_pass(
             # its successors out for work that is never going to happen.
             # Settled without timestamps (cancelled before it began) collapses
             # to a zero-length interval at the present.
+            # A task ticked off without ever being started has no start time,
+            # and the schedule does not invent one. Crediting it its budgeted
+            # duration would put a claim in the UI that nobody made -- "ran
+            # 11:32 to 23:32" for work that was simply marked done at 23:32.
+            # It collapses to an instant, which the chart draws as a milestone
+            # rather than as a bar of no width (design.md §4.6).
             end = task.actual_end or now
-            start = task.actual_start
-            if start is None and task.status is TaskStatus.DONE:
-                # Ticked off without ever having been started, which is the
-                # ordinary path for a manual completion. We do not know when
-                # the work began, so we credit it the time it was budgeted:
-                # collapsing it to an instant drew a task that took no time at
-                # all and dragged its whole phase back to the moment it was
-                # ticked.
-                start = calendar.sub(end, effective_seconds(task, calendar))
-            schedule.intervals[task_id] = Interval(start or end, end)
+            schedule.intervals[task_id] = Interval(
+                task.actual_start or end, end
+            )
             continue
 
         predecessors = incoming.get(task_id, ())

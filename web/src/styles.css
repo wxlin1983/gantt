@@ -669,6 +669,14 @@ textarea {
   stroke-width: 1.5;
 }
 
+/* Kept solid and outlined at every status: it is a point on the timeline, and
+   the outlined-pending treatment would make it vanish. */
+.bar-milestone {
+  fill: var(--hue);
+  stroke: #fff;
+  stroke-width: 1;
+}
+
 .bar-baseline {
   fill: rgb(255 255 255 / 28%);
 }

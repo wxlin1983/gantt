@@ -15,6 +15,8 @@ import {
   formatDuration,
   formatMoment,
   formatPercent,
+  formatSpan,
+  isInstant,
   isLateStart,
   variance,
 } from "../../lib/format";
@@ -287,6 +289,12 @@ export function CaseDetailPage() {
 
       {selected && (
         <TaskDrawer
+          // Keyed on the task, so selecting a different one remounts the
+          // drawer. Without this its `useState` initialisers keep the previous
+          // task's values: the duration field showed the task you looked at
+          // before, and saving wrote that number onto the one you were
+          // looking at.
+          key={selected.id}
           caseId={caseId}
           task={selected}
           detail={data}
@@ -336,6 +344,10 @@ function TaskTable({
           <th>Task</th>
           <th>Status</th>
           <th>Phase</th>
+          {/* Without this the windows below look self-contradictory: a
+              12-hour task planned across 27 hours is a working calendar
+              spanning a night, not an error. */}
+          <th>Duration</th>
           <th>Planned</th>
           <th>Forecast</th>
           <th>Variance</th>
@@ -358,12 +370,26 @@ function TaskTable({
               </td>
               <td className="muted">{task.phase || "—"}</td>
               <td className="muted">
+                {formatSpan(task.duration_seconds)}
+              </td>
+              <td className="muted">
                 {formatMoment(task.baseline_start)} →{" "}
                 {formatMoment(task.baseline_end)}
               </td>
               <td>
-                {formatMoment(task.forecast_start)} →{" "}
-                {formatMoment(task.forecast_end)}
+                {/* Completed without a recorded start: one moment, not a
+                    window we would be making up. */}
+                {isInstant(task) ? (
+                  <>
+                    {formatMoment(task.forecast_end)}
+                    <span className="muted small"> · completed</span>
+                  </>
+                ) : (
+                  <>
+                    {formatMoment(task.forecast_start)} →{" "}
+                    {formatMoment(task.forecast_end)}
+                  </>
+                )}
               </td>
               <td className={delta && delta > 0 ? "tone-danger" : ""}>
                 {/* An unplanned task has no baseline, so there is no variance
