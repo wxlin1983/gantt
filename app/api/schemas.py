@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -219,3 +219,75 @@ class MyTaskOut(Out):
     baseline_end: datetime | None
     forecast_end: datetime | None
     is_late_start: bool
+
+
+class InsertTaskRequest(Body):
+    name: str = Field(min_length=1, max_length=128)
+    display_name: str = ""
+    task_template: str | None = None
+    duration_seconds: int | None = Field(default=None, ge=0)
+    owner_id: int | None = None
+    group_id: int | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    predecessors: list[str] = Field(default_factory=list)
+    successors: list[str] = Field(default_factory=list)
+    #: `serial` splices into the chain; `parallel` hangs alongside it. Spelled
+    #: out rather than inferred, because it is the choice people get wrong.
+    mode: Literal["serial", "parallel"] = "serial"
+
+
+class DeleteTaskRequest(Body):
+    mode: Literal["reconnect", "detach"] = "reconnect"
+
+
+class SimulateRequest(Body):
+    task_name: str | None = None
+    duration_seconds: int | None = Field(default=None, ge=0)
+    insert_after: str | None = None
+    insert_duration_seconds: int = Field(default=0, ge=0)
+
+
+class SimulateOut(BaseModel):
+    current_forecast_end: datetime | None
+    simulated_forecast_end: datetime | None
+    delta_seconds: int
+    affected: list[dict[str, Any]]
+    exceeds_target: bool
+    exceeds_target_by_seconds: int
+
+
+class ResetBaselineRequest(Body):
+    note: str = ""
+
+
+class TaskRunOut(Out):
+    attempt: int
+    handler_name: str
+    status: str
+    external_ref: str | None
+    error_message: str | None
+    error_detail: str | None
+    started_at: datetime
+    finished_at: datetime | None
+
+
+class NotificationOut(Out):
+    id: int
+    type: str
+    title: str
+    body: str
+    case_id: int | None
+    case_task_id: int | None
+    read_at: datetime | None
+    created_at: datetime
+
+
+class AuditEventOut(Out):
+    id: int
+    event_type: str
+    actor_id: int | None
+    case_task_id: int | None
+    note: str
+    created_at: datetime
+    before_state: dict[str, Any] | None
+    after_state: dict[str, Any] | None

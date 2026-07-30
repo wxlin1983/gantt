@@ -7,6 +7,7 @@ import { Link, useParams } from "react-router-dom";
 import { ApiError, api } from "../../api/client";
 import type { CaseDetail as Detail, Task } from "../../api/types";
 import { GanttChart } from "../../components/gantt/GanttChart";
+import { InsertTaskDialog } from "./InsertTaskDialog";
 import {
   HEALTH_META,
   STATUS_META,
@@ -27,6 +28,8 @@ export function CaseDetailPage() {
   const [view, setView] = useState<"gantt" | "list">("gantt");
   const [showCritical, setShowCritical] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [inserting, setInserting] = useState(false);
+  const [editingTarget, setEditingTarget] = useState(false);
 
   const detail = useQuery({
     queryKey: ["case", caseId],
@@ -61,6 +64,37 @@ export function CaseDetailPage() {
     onError,
   });
 
+  const retry = useMutation({
+    mutationFn: (taskId: number) => api.retryTask(caseId, taskId),
+    onSuccess: refresh,
+    onError,
+  });
+
+  const removeTask = useMutation({
+    mutationFn: (taskId: number) => api.deleteTask(caseId, taskId),
+    onSuccess: (next) => {
+      setSelected(null);
+      refresh(next);
+    },
+    onError,
+  });
+
+  const moveTarget = useMutation({
+    mutationFn: (payload: { target_date: string; note: string }) =>
+      api.updateCase(caseId, payload),
+    onSuccess: (next) => {
+      setEditingTarget(false);
+      refresh(next);
+    },
+    onError,
+  });
+
+  const cancelCase = useMutation({
+    mutationFn: (note: string) => api.cancelCase(caseId, note),
+    onSuccess: refresh,
+    onError,
+  });
+
   if (detail.isLoading) return <p className="muted page">Loading…</p>;
   if (detail.error) {
     return (
@@ -86,8 +120,22 @@ export function CaseDetailPage() {
           <p className="muted">
             {data.template_name} v{data.template_version} · target{" "}
             {formatMoment(data.target_date)}
+            {data.permissions.can_edit && data.status === "active" && (
+              <button
+                type="button"
+                className="button small"
+                onClick={() => setEditingTarget(true)}
+              >
+                Change
+              </button>
+            )}
             {data.target_date_history.length > 0 && (
-              <span className="pill" title="Target date has been changed">
+              <span
+                className="pill"
+                title={data.target_date_history
+                  .map((entry) => `${entry.from} → ${entry.to} ${entry.note}`)
+                  .join("\n")}
+              >
                 target moved ×{data.target_date_history.length}
               </span>
             )}
@@ -160,7 +208,40 @@ export function CaseDetailPage() {
           />
           Highlight critical path
         </label>
+        <span className="spacer" />
+        {data.status === "active" && data.permissions.can_insert_task && (
+          <button
+            type="button"
+            className="button"
+            onClick={() => setInserting(true)}
+          >
+            + Insert step
+          </button>
+        )}
+        {data.status === "active" && data.permissions.can_cancel && (
+          <button
+            type="button"
+            className="button"
+            onClick={() => {
+              const note = window.prompt("Why is this case being cancelled?");
+              if (note !== null) cancelCase.mutate(note);
+            }}
+          >
+            Cancel case
+          </button>
+        )}
       </div>
+
+      {editingTarget && (
+        <TargetDateForm
+          current={data.target_date}
+          busy={moveTarget.isPending}
+          onCancel={() => setEditingTarget(false)}
+          onSave={(target_date, note) =>
+            moveTarget.mutate({ target_date, note })
+          }
+        />
+      )}
 
       {error && (
         <div className="banner tone-danger" role="alert">
@@ -195,11 +276,23 @@ export function CaseDetailPage() {
         </div>
       )}
 
+      {inserting && (
+        <InsertTaskDialog
+          detail={data}
+          anchor={selected?.name}
+          onClose={() => setInserting(false)}
+          onInserted={refresh}
+        />
+      )}
+
       {selected && (
         <TaskDrawer
+          caseId={caseId}
           task={selected}
           detail={data}
-          busy={complete.isPending || update.isPending}
+          busy={
+            complete.isPending || update.isPending || retry.isPending
+          }
           onClose={() => setSelected(null)}
           onComplete={(note) =>
             complete.mutate({ taskId: selected.id, note })
@@ -213,6 +306,16 @@ export function CaseDetailPage() {
               },
             })
           }
+          onRetry={() => retry.mutate(selected.id)}
+          onDelete={() => {
+            if (
+              window.confirm(
+                `Remove ${selected.name}? Its neighbours will be reconnected.`,
+              )
+            ) {
+              removeTask.mutate(selected.id);
+            }
+          }}
         />
       )}
     </section>
@@ -275,20 +378,104 @@ function TaskTable({
   );
 }
 
+function TargetDateForm({
+  current,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  current: string;
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (targetDate: string, note: string) => void;
+}) {
+  const at = new Date(current);
+  const [date, setDate] = useState(
+    `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(
+      at.getDate(),
+    ).padStart(2, "0")}`,
+  );
+  const [time, setTime] = useState(
+    `${String(at.getHours()).padStart(2, "0")}:${String(
+      at.getMinutes(),
+    ).padStart(2, "0")}`,
+  );
+  const [note, setNote] = useState("");
+
+  return (
+    <div className="panel">
+      <h3>Change the target date</h3>
+      <p className="muted small">
+        {/* The baseline is the record of what was originally promised, so
+            moving the target deliberately leaves it alone (§5.10). */}
+        The original plan stays as it is — only the target moves, and the
+        change is recorded.
+      </p>
+      <div className="form">
+        <label>
+          New target
+          <span className="field-row">
+            <input
+              type="date"
+              value={date}
+              onChange={(event) => setDate(event.target.value)}
+            />
+            <input
+              type="time"
+              value={time}
+              step={900}
+              onChange={(event) => setTime(event.target.value)}
+            />
+          </span>
+        </label>
+        <label>
+          Why
+          <input
+            value={note}
+            placeholder="customer moved the date"
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </label>
+        <nav className="wizard-nav">
+          <button type="button" className="button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="button primary"
+            disabled={busy || !date}
+            onClick={() =>
+              onSave(new Date(`${date}T${time}`).toISOString(), note)
+            }
+          >
+            Move target
+          </button>
+        </nav>
+      </div>
+    </div>
+  );
+}
+
 function TaskDrawer({
+  caseId,
   task,
   detail,
   busy,
   onClose,
   onComplete,
   onSaveDuration,
+  onRetry,
+  onDelete,
 }: {
+  caseId: number;
   task: Task;
   detail: Detail;
   busy: boolean;
   onClose: () => void;
   onComplete: (note: string) => void;
   onSaveDuration: (seconds: number) => void;
+  onRetry: () => void;
+  onDelete: () => void;
 }) {
   const [hours, setHours] = useState(task.duration_seconds / 3600);
   const [note, setNote] = useState("");
@@ -437,6 +624,59 @@ function TaskDrawer({
           You cannot complete this task — only its owner or their group can.
         </p>
       )}
+
+      {task.task_api && <RunHistory caseId={caseId} task={task} />}
+
+      <div className="drawer-action">
+        {/* Retrying and completing by hand are the two ways out of a failed
+            handler; neither should be hidden (design.md §7.2). */}
+        {task.status === "failed" && task.permissions.can_retry && (
+          <button
+            type="button"
+            className="button"
+            disabled={busy}
+            onClick={onRetry}
+          >
+            ↻ Run again
+          </button>
+        )}
+        {task.permissions.can_edit &&
+          task.status !== "done" &&
+          task.status !== "running" && (
+            <button type="button" className="button" onClick={onDelete}>
+              Remove this step
+            </button>
+          )}
+      </div>
     </aside>
+  );
+}
+
+function RunHistory({ caseId, task }: { caseId: number; task: Task }) {
+  const runs = useQuery({
+    queryKey: ["runs", caseId, task.id, task.version],
+    queryFn: () => api.taskRuns(caseId, task.id),
+  });
+  if (!runs.data?.length) return null;
+  return (
+    <div className="panel">
+      <h3>Run history</h3>
+      {runs.data.map((run) => (
+        <p key={run.attempt} className="small">
+          <span className={run.status === "failed" ? "tone-danger" : ""}>
+            #{run.attempt} {run.status}
+          </span>{" "}
+          <span className="muted">
+            {run.handler_name} · {formatMoment(run.started_at)}
+          </span>
+          {run.error_message && (
+            <>
+              <br />
+              <span className="tone-danger">{run.error_message}</span>
+            </>
+          )}
+        </p>
+      ))}
+    </div>
   );
 }

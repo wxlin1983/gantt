@@ -205,3 +205,45 @@ export interface TemplateHealth {
 export interface ApiErrorBody {
   error: { code: string; message: string; details: Record<string, unknown> };
 }
+
+export interface TaskRun {
+  attempt: number;
+  handler_name: string;
+  status: string;
+  external_ref: string | null;
+  error_message: string | null;
+  error_detail: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface Simulation {
+  current_forecast_end: string | null;
+  simulated_forecast_end: string | null;
+  delta_seconds: number;
+  affected: { name: string; delta_seconds: number }[];
+  exceeds_target: boolean;
+  exceeds_target_by_seconds: number;
+}
+
+export interface Notification {
+  id: number;
+  type: string;
+  title: string;
+  body: string;
+  case_id: number | null;
+  case_task_id: number | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface AuditEvent {
+  id: number;
+  event_type: string;
+  actor_id: number | null;
+  case_task_id: number | null;
+  note: string;
+  created_at: string;
+  before_state: Record<string, unknown> | null;
+  after_state: Record<string, unknown> | null;
+}

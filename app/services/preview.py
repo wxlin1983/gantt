@@ -8,7 +8,7 @@ produced by one piece of code and therefore cannot disagree.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dsl.schema import ExpansionResult
 from app.scheduling import (
     Schedule,
+    ScheduleEdge,
     backward_pass,
     critical_path,
     forward_pass,
@@ -116,3 +117,101 @@ def _engine_input(result: ExpansionResult):
     from app.scheduling import from_expansion
 
     return from_expansion(result)
+
+
+@dataclass(slots=True)
+class Simulation:
+    """What a proposed change would do, without doing it (§8.5)."""
+
+    current_forecast_end: datetime | None
+    simulated_forecast_end: datetime | None
+    delta_seconds: int
+    affected: list[dict[str, Any]]
+    exceeds_target: bool
+    exceeds_target_by_seconds: int
+
+
+async def simulate(
+    session: AsyncSession,
+    case,
+    *,
+    task_name: str | None = None,
+    duration_seconds: int | None = None,
+    insert_after: str | None = None,
+    insert_duration_seconds: int = 0,
+    now: datetime | None = None,
+) -> Simulation:
+    """Re-forecast with a change applied in memory only.
+
+    This is what lets the drawer say "this makes the report two hours later"
+    *before* the user commits. It runs the same forward pass as the real thing,
+    so the number shown is the number they will get.
+    """
+    moment = now or case_service.now_utc()
+    prepared = await case_service.build_schedule_input(session, case)
+    before = forward_pass(
+        prepared.tasks, prepared.edges, moment, prepared.calendars
+    )
+
+    tasks = [replace(task) for task in prepared.tasks]
+    edges = list(prepared.edges)
+
+    if task_name and duration_seconds is not None:
+        for task in tasks:
+            if task.id == task_name:
+                task.duration_seconds = duration_seconds
+                task.duration_days = None
+
+    if insert_after:
+        from app.scheduling import ScheduleTask
+
+        placeholder = "__simulated__"
+        tasks.append(
+            ScheduleTask(
+                id=placeholder, duration_seconds=insert_duration_seconds
+            )
+        )
+        # Splice it in: everything that followed the anchor now follows the
+        # new step instead, which is what makes the knock-on visible.
+        moved = [
+            edge for edge in edges if edge.predecessor == insert_after
+        ]
+        edges = [edge for edge in edges if edge not in moved]
+        edges.append(ScheduleEdge(insert_after, placeholder))
+        edges.extend(
+            ScheduleEdge(placeholder, edge.successor, edge.lag_seconds)
+            for edge in moved
+        )
+
+    after = forward_pass(tasks, edges, moment, prepared.calendars)
+
+    affected = [
+        {
+            "name": name,
+            "delta_seconds": int(
+                (after[name].end - before[name].end).total_seconds()
+            ),
+        }
+        for name in before.intervals
+        if name in after
+        and after[name].end != before[name].end
+    ]
+    delta = 0
+    if before.latest_end and after.latest_end:
+        delta = int((after.latest_end - before.latest_end).total_seconds())
+    overshoot = 0
+    if after.latest_end:
+        overshoot = max(
+            int((after.latest_end - case.target_date).total_seconds()), 0
+        )
+
+    return Simulation(
+        current_forecast_end=before.latest_end,
+        simulated_forecast_end=after.latest_end,
+        delta_seconds=delta,
+        affected=sorted(
+            affected, key=lambda item: -abs(item["delta_seconds"])
+        ),
+        exceeds_target=overshoot > 0,
+        exceeds_target_by_seconds=overshoot,
+    )

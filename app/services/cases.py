@@ -11,14 +11,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.dsl.duration import parse_duration
 from app.dsl.errors import DslError
 from app.dsl.expansion import expand
+from app.dsl.graph import find_cycle
 from app.dsl.schema import ExpansionResult
 from app.models import (
     AuditEvent,
@@ -725,3 +728,327 @@ async def audit(
     session.add(event)
     await session.flush()
     return event
+
+# --- inserting and removing tasks ------------------------------------------
+
+
+class InsertMode(StrEnum):
+    #: Splice into the chain: predecessors -> new -> successors, cutting the
+    #: direct edges that used to join them.
+    SERIAL = "serial"
+    #: Hang alongside: the existing edges stay, the new task only follows its
+    #: predecessors.
+    PARALLEL = "parallel"
+
+
+class DeleteMode(StrEnum):
+    #: a -> b -> c becomes a -> c.
+    RECONNECT = "reconnect"
+    #: Successors lose the dependency and may start immediately.
+    DETACH = "detach"
+
+
+async def insert_task(
+    session: AsyncSession,
+    actor: User | None,
+    case: GanttCase,
+    *,
+    name: str,
+    display_name: str = "",
+    task_template: str | None = None,
+    duration_seconds: int | None = None,
+    owner_id: int | None = None,
+    group_id: int | None = None,
+    params: dict[str, Any] | None = None,
+    predecessors: Sequence[str] = (),
+    successors: Sequence[str] = (),
+    mode: InsertMode = InsertMode.SERIAL,
+) -> CaseTask:
+    """Add a task to a running case (implement.md §8.4).
+
+    The new task gets **no baseline**: it was not in the original plan, and
+    inventing one would produce a variance figure that means nothing (§5.10).
+    Leaving it null is also what makes "this case grew work it did not plan
+    for" visible, which is exactly what a review wants to know.
+    """
+    if case.status is not CaseStatus.ACTIVE:
+        raise CaseError(
+            "E_NOT_ACTIVE", f"case {case.id} is {case.status}"
+        )
+    by_name = {task.name: task for task in case.tasks}
+    if name in by_name:
+        raise CaseError(
+            "E_DUP_TASK_NAME", f"{name!r} already exists in this case"
+        )
+
+    unknown = [
+        ref
+        for ref in (*predecessors, *successors)
+        if ref not in by_name
+    ]
+    if unknown:
+        raise CaseError(
+            "E_UNKNOWN_REQUIREMENT",
+            f"no such task in this case: {', '.join(sorted(unknown))}",
+        )
+
+    source = (case.template_snapshot.get("task_templates") or {}).get(
+        task_template or "", {}
+    )
+    if duration_seconds is None:
+        duration_seconds = parse_duration(
+            source.get("default_duration", 0), "insert.duration"
+        )
+
+    row = CaseTask(
+        case_id=case.id,
+        name=name,
+        display_name=display_name or name,
+        source_task_template=task_template,
+        phase=_neighbour_phase(by_name, predecessors, successors),
+        duration_seconds=duration_seconds,
+        status=TaskStatus.PENDING,
+        owner_id=owner_id,
+        owner_source="manual" if owner_id else "literal",
+        group_id=group_id,
+        params=params or {},
+        task_api=source.get("task_api") or None,
+        api_mode=source.get("api_mode"),
+        api_config={
+            **(source.get("api_config") or {}),
+            "calendar": calendar_service.BUILTIN_CONTINUOUS,
+            "duration_days": None,
+        },
+        allow_manual_override=source.get("allow_manual_override", True),
+        sort_order=_insert_sort_order(by_name, predecessors),
+    )
+    session.add(row)
+    await session.flush()
+
+    edges = await dependencies(session, case.id)
+    if mode is InsertMode.SERIAL and predecessors and successors:
+        # Cut the edges the new task is being spliced into, so it does not end
+        # up running alongside the link it was meant to interrupt.
+        cut = {
+            (by_name[p].id, by_name[s].id)
+            for p in predecessors
+            for s in successors
+        }
+        for edge in edges:
+            if (edge.predecessor_id, edge.successor_id) in cut:
+                await session.delete(edge)
+
+    for ref in predecessors:
+        session.add(
+            TaskDependency(
+                case_id=case.id,
+                predecessor_id=by_name[ref].id,
+                successor_id=row.id,
+            )
+        )
+    for ref in successors:
+        session.add(
+            TaskDependency(
+                case_id=case.id,
+                predecessor_id=row.id,
+                successor_id=by_name[ref].id,
+            )
+        )
+    await session.flush()
+    await session.refresh(case, ["tasks"])
+
+    fresh_edges = await dependencies(session, case.id)
+    _assert_acyclic(case, fresh_edges)
+    promote_ready(case.tasks, fresh_edges)
+    await recalculate(session, case)
+    await audit(
+        session,
+        case=case,
+        task=row,
+        actor=actor,
+        event_type="task.inserted",
+        after_state={
+            "name": name,
+            "mode": str(mode),
+            "predecessors": list(predecessors),
+            "successors": list(successors),
+        },
+    )
+    return row
+
+
+async def delete_task(
+    session: AsyncSession,
+    actor: User | None,
+    case: GanttCase,
+    task: CaseTask,
+    mode: DeleteMode = DeleteMode.RECONNECT,
+) -> None:
+    """Remove a task, optionally stitching its neighbours together.
+
+    Work that has started or finished is never deleted -- cancelling it keeps
+    the audit trail intact, which is the whole point of having one.
+    """
+    if task.status in (TaskStatus.DONE, TaskStatus.RUNNING):
+        raise CaseError(
+            "E_TASK_NOT_DELETABLE",
+            f"{task.name} is {task.status}; cancel it instead so the record "
+            "survives",
+        )
+
+    edges = await dependencies(session, case.id)
+    incoming = [e for e in edges if e.successor_id == task.id]
+    outgoing = [e for e in edges if e.predecessor_id == task.id]
+
+    if mode is DeleteMode.RECONNECT:
+        existing = {(e.predecessor_id, e.successor_id) for e in edges}
+        for before in incoming:
+            for after in outgoing:
+                pair = (before.predecessor_id, after.successor_id)
+                if pair[0] == pair[1] or pair in existing:
+                    continue
+                session.add(
+                    TaskDependency(
+                        case_id=case.id,
+                        predecessor_id=pair[0],
+                        successor_id=pair[1],
+                        # The wait either side of a removed step must not be
+                        # silently swallowed.
+                        lag_seconds=before.lag_seconds + after.lag_seconds,
+                    )
+                )
+                existing.add(pair)
+
+    for edge in (*incoming, *outgoing):
+        await session.delete(edge)
+    await session.delete(task)
+    await session.flush()
+    await session.refresh(case, ["tasks"])
+
+    fresh_edges = await dependencies(session, case.id)
+    promote_ready(case.tasks, fresh_edges)
+    await recalculate(session, case)
+    await audit(
+        session,
+        case=case,
+        actor=actor,
+        event_type="task.deleted",
+        before_state={"name": task.name, "mode": str(mode)},
+    )
+
+
+def _neighbour_phase(
+    by_name: dict[str, CaseTask],
+    predecessors: Sequence[str],
+    successors: Sequence[str],
+) -> str:
+    """Put an inserted task in the same phase as whatever it sits between."""
+    for ref in (*predecessors, *successors):
+        if by_name[ref].phase:
+            return by_name[ref].phase
+    return ""
+
+
+def _insert_sort_order(
+    by_name: dict[str, CaseTask], predecessors: Sequence[str]
+) -> int:
+    if not predecessors:
+        return 0
+    return max(by_name[ref].sort_order for ref in predecessors) + 1
+
+
+def _assert_acyclic(
+    case: GanttCase, edges: Sequence[TaskDependency]
+) -> None:
+    by_id = {task.id: task.name for task in case.tasks}
+    cycle = find_cycle(
+        [task.name for task in case.tasks],
+        [
+            (by_id[e.predecessor_id], by_id[e.successor_id])
+            for e in edges
+            if e.predecessor_id in by_id and e.successor_id in by_id
+        ],
+    )
+    if cycle:
+        raise CaseError(
+            "E_CYCLE", "that would create a cycle: " + " -> ".join(cycle)
+        )
+
+
+async def reopen_task(
+    session: AsyncSession, actor: User | None, case: GanttCase, task: CaseTask
+) -> Outlook:
+    """Undo a completion, re-blocking whatever followed it."""
+    if task.status is not TaskStatus.DONE:
+        raise CaseError(
+            "E_NOT_DONE", f"{task.name} is {task.status}, not done"
+        )
+    task.status = TaskStatus.READY
+    task.actual_end = None
+    task.completion_source = None
+    task.completed_by_id = None
+    # The version doubles as the alert epoch, so reopening restarts the
+    # deadline warnings rather than staying permanently silent.
+    task.version += 1
+    await session.flush()
+
+    promote_ready(case.tasks, await dependencies(session, case.id))
+    outlook = await recalculate(session, case)
+    await audit(
+        session,
+        case=case,
+        task=task,
+        actor=actor,
+        event_type="task.reopened",
+    )
+    return outlook
+
+
+async def reset_baseline(
+    session: AsyncSession, actor: User | None, case: GanttCase, note: str = ""
+) -> Outlook:
+    """Overwrite the baseline with the current forecast (§5.10).
+
+    Deliberately awkward to reach: this erases what was originally promised,
+    so the previous baseline is archived rather than discarded.
+
+    Note what it does to the plan's character. The baseline was produced by
+    the backward pass and is therefore as-late-as-possible; the forecast is
+    as-early-as-possible. Resetting pulls every task with slack earlier, even
+    on a case running exactly to schedule. That is intended -- the new plan is
+    "when we now expect to do it" -- but it is not what "reset" sounds like.
+    """
+    outlook = await recalculate(session, case)
+    case.baseline_resets = [
+        *(case.baseline_resets or []),
+        {
+            "at": now_utc().isoformat(),
+            "by": actor.id if actor else None,
+            "note": note,
+            "baseline": [
+                {
+                    "name": task.name,
+                    "start": task.baseline_start.isoformat()
+                    if task.baseline_start
+                    else None,
+                    "end": task.baseline_end.isoformat()
+                    if task.baseline_end
+                    else None,
+                }
+                for task in case.tasks
+            ],
+        },
+    ]
+    for task in case.tasks:
+        task.baseline_start = task.forecast_start
+        task.baseline_end = task.forecast_end
+    case.version += 1
+    await session.flush()
+    await audit(
+        session,
+        case=case,
+        actor=actor,
+        event_type="case.baseline_reset",
+        note=note,
+    )
+    return outlook

@@ -9,6 +9,7 @@ import { CaseDetailPage } from "./features/cases/CaseDetail";
 import { CaseList } from "./features/cases/CaseList";
 import { CreateWizard } from "./features/cases/CreateWizard";
 import { MyTasks } from "./features/cases/MyTasks";
+import { NotificationBell } from "./features/cases/NotificationBell";
 import { TemplateEditor } from "./features/templates/TemplateEditor";
 import { TemplateList } from "./features/templates/TemplateList";
 
@@ -38,6 +39,7 @@ export function App() {
         <NavLink to="/my-tasks">My tasks</NavLink>
         <NavLink to="/templates">Templates</NavLink>
         <span className="spacer" />
+        <NotificationBell />
         <span className="muted small">{me.data.user.display_name}</span>
         <button
           type="button"

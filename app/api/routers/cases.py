@@ -23,20 +23,29 @@ from app.services import cases as case_service
 from app.services import preview as preview_service
 
 from ..deps import PrincipalDep, SessionDep, UserDep, require
+from ..errors import ApiError
 from ..schemas import (
+    AuditEventOut,
     CancelRequest,
     CaseDetailOut,
     CaseSummaryOut,
     CompleteTaskRequest,
     CreateCaseRequest,
+    DeleteTaskRequest,
     EdgeOut,
     HealthCountsOut,
+    InsertTaskRequest,
     MyTaskOut,
+    NotificationOut,
     PreviewOut,
     PreviewRequest,
     PreviewTaskOut,
+    ResetBaselineRequest,
+    SimulateOut,
+    SimulateRequest,
     SkippedOut,
     TaskOut,
+    TaskRunOut,
     UpdateCaseRequest,
     UpdateTaskRequest,
 )
@@ -386,6 +395,329 @@ async def complete_task(
         note=body.note,
     )
     return await _detail(session, case, principal)
+
+
+@router.post(
+    "/cases/{case_id}/tasks/insert",
+    response_model=CaseDetailOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def insert_task(
+    case_id: int,
+    body: InsertTaskRequest,
+    session: SessionDep,
+    user: UserDep,
+    principal: PrincipalDep,
+) -> CaseDetailOut:
+    """Add a step to a running case (§8.4).
+
+    The new task has no baseline: it was not in the original plan, and giving
+    it one would fabricate a variance figure (§5.10).
+    """
+    case = await case_service.load(session, case_id, for_update=True)
+    neighbours = [
+        task
+        for task in case.tasks
+        if task.name in {*body.predecessors, *body.successors}
+    ]
+    require(
+        permissions.can_insert_task(principal, case, neighbours),
+        "you cannot add tasks to this case",
+    )
+    await case_service.insert_task(
+        session,
+        user,
+        case,
+        name=body.name,
+        display_name=body.display_name,
+        task_template=body.task_template,
+        duration_seconds=body.duration_seconds,
+        owner_id=body.owner_id,
+        group_id=body.group_id,
+        params=body.params,
+        predecessors=body.predecessors,
+        successors=body.successors,
+        mode=case_service.InsertMode(body.mode),
+    )
+    return await _detail(session, case, principal)
+
+
+@router.post(
+    "/cases/{case_id}/tasks/{task_id}/delete", response_model=CaseDetailOut
+)
+async def delete_task(
+    case_id: int,
+    task_id: int,
+    body: DeleteTaskRequest,
+    session: SessionDep,
+    user: UserDep,
+    principal: PrincipalDep,
+) -> CaseDetailOut:
+    """Remove a step, stitching its neighbours together by default."""
+    case = await case_service.load(session, case_id, for_update=True)
+    task = await case_service.find_task(session, case, task_id)
+    require(
+        permissions.can_delete_task(principal, task, case),
+        f"you cannot remove {task.name}",
+    )
+    await case_service.delete_task(
+        session, user, case, task, case_service.DeleteMode(body.mode)
+    )
+    return await _detail(session, case, principal)
+
+
+@router.post("/cases/{case_id}/tasks/simulate", response_model=SimulateOut)
+async def simulate(
+    case_id: int,
+    body: SimulateRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> SimulateOut:
+    """Re-forecast a proposed change without applying it (§8.5).
+
+    This is what lets the editor say "this pushes the report two hours out"
+    before anything is committed.
+    """
+    require(permissions.can_view(principal), "sign in first")
+    case = await case_service.load(session, case_id)
+    result = await preview_service.simulate(
+        session,
+        case,
+        task_name=body.task_name,
+        duration_seconds=body.duration_seconds,
+        insert_after=body.insert_after,
+        insert_duration_seconds=body.insert_duration_seconds,
+    )
+    return SimulateOut(
+        current_forecast_end=result.current_forecast_end,
+        simulated_forecast_end=result.simulated_forecast_end,
+        delta_seconds=result.delta_seconds,
+        affected=result.affected,
+        exceeds_target=result.exceeds_target,
+        exceeds_target_by_seconds=result.exceeds_target_by_seconds,
+    )
+
+
+@router.post(
+    "/cases/{case_id}/tasks/{task_id}/reopen", response_model=CaseDetailOut
+)
+async def reopen_task(
+    case_id: int,
+    task_id: int,
+    session: SessionDep,
+    user: UserDep,
+    principal: PrincipalDep,
+) -> CaseDetailOut:
+    """Undo a completion. Admin only: `done` is otherwise terminal."""
+    case = await case_service.load(session, case_id, for_update=True)
+    task = await case_service.find_task(session, case, task_id)
+    require(
+        permissions.can_reopen_task(principal),
+        "only a template admin can reopen a completed task",
+    )
+    await case_service.reopen_task(session, user, case, task)
+    return await _detail(session, case, principal)
+
+
+@router.post(
+    "/cases/{case_id}/tasks/{task_id}/retry", response_model=CaseDetailOut
+)
+async def retry_task(
+    case_id: int,
+    task_id: int,
+    session: SessionDep,
+    user: UserDep,
+    principal: PrincipalDep,
+) -> CaseDetailOut:
+    """Queue another attempt at a failed automated task.
+
+    One of the two escape hatches from a failed handler; completing it by hand
+    is the other (design.md §7.2).
+    """
+    from app.execution import queue
+    from app.models import JobType
+
+    case = await case_service.load(session, case_id, for_update=True)
+    task = await case_service.find_task(session, case, task_id)
+    require(
+        permissions.can_retry_task(principal, task, case),
+        f"you cannot retry {task.name}",
+    )
+    if not task.task_api:
+        raise ApiError(
+            "E_NOT_AUTOMATED", f"{task.name} has no handler to retry"
+        )
+
+    task.status = TaskStatus.READY
+    task.version += 1
+    await session.flush()
+    await queue.enqueue(
+        session,
+        JobType.TRIGGER,
+        case_id=case.id,
+        case_task_id=task.id,
+        dedupe=True,
+    )
+    await case_service.audit(
+        session, case=case, task=task, actor=user, event_type="task.retried"
+    )
+    await case_service.recalculate(session, case)
+    return await _detail(session, case, principal)
+
+
+@router.get(
+    "/cases/{case_id}/tasks/{task_id}/runs",
+    response_model=list[TaskRunOut],
+)
+async def task_runs(
+    case_id: int,
+    task_id: int,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> list[TaskRunOut]:
+    """Every attempt at driving this task, newest first (design.md §7.2)."""
+    from app.models import TaskRun
+
+    require(permissions.can_view(principal), "sign in first")
+    case = await case_service.load(session, case_id)
+    task = await case_service.find_task(session, case, task_id)
+    rows = (
+        await session.scalars(
+            select(TaskRun)
+            .where(TaskRun.case_task_id == task.id)
+            .order_by(TaskRun.attempt.desc())
+        )
+    ).all()
+    return [TaskRunOut.model_validate(row) for row in rows]
+
+
+@router.post(
+    "/cases/{case_id}/reset-baseline", response_model=CaseDetailOut
+)
+async def reset_baseline(
+    case_id: int,
+    body: ResetBaselineRequest,
+    session: SessionDep,
+    user: UserDep,
+    principal: PrincipalDep,
+) -> CaseDetailOut:
+    """Overwrite the baseline with the current forecast (§5.10).
+
+    Erases what was originally promised, so the previous baseline is archived
+    and the whole thing is restricted and audited.
+    """
+    case = await case_service.load(session, case_id, for_update=True)
+    require(
+        permissions.can_reset_baseline(principal, case),
+        "only the case owner or an admin can reset the baseline",
+    )
+    await case_service.reset_baseline(session, user, case, body.note)
+    return await _detail(session, case, principal)
+
+
+@router.post("/cases/{case_id}/archive", response_model=CaseDetailOut)
+async def archive_case(
+    case_id: int,
+    session: SessionDep,
+    user: UserDep,
+    principal: PrincipalDep,
+) -> CaseDetailOut:
+    """Hide a finished case from the default list without deleting it."""
+    case = await case_service.load(session, case_id, for_update=True)
+    require(
+        permissions.can_edit_case(principal, case),
+        "only the case owner or an admin can archive this case",
+    )
+    case.archived_at = case_service.now_utc()
+    await session.flush()
+    await case_service.audit(
+        session, case=case, actor=user, event_type="case.archived"
+    )
+    return await _detail(session, case, principal)
+
+
+@router.get("/cases/{case_id}/audit", response_model=list[AuditEventOut])
+async def case_audit(
+    case_id: int, session: SessionDep, principal: PrincipalDep
+) -> list[AuditEventOut]:
+    require(permissions.can_view(principal), "sign in first")
+    from app.models import AuditEvent
+
+    rows = (
+        await session.scalars(
+            select(AuditEvent)
+            .where(AuditEvent.case_id == case_id)
+            .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+        )
+    ).all()
+    return [AuditEventOut.model_validate(row) for row in rows]
+
+
+# --- notifications ---------------------------------------------------------
+
+
+@router.get("/notifications", response_model=list[NotificationOut])
+async def list_notifications(
+    session: SessionDep,
+    user: UserDep,
+    unread_only: Annotated[bool, Query()] = False,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[NotificationOut]:
+    from app.models import Notification
+
+    statement = (
+        select(Notification)
+        .where(Notification.user_id == user.id)
+        .order_by(Notification.created_at.desc())
+        .limit(limit)
+    )
+    if unread_only:
+        statement = statement.where(Notification.read_at.is_(None))
+    rows = (await session.scalars(statement)).all()
+    return [NotificationOut.model_validate(row) for row in rows]
+
+
+@router.post(
+    "/notifications/{notification_id}/read",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def mark_read(
+    notification_id: int, session: SessionDep, user: UserDep
+) -> None:
+    from app.models import Notification
+
+    row = (
+        await session.scalars(
+            select(Notification).where(
+                Notification.id == notification_id,
+                # Scoped to the signed-in user, so an id cannot be used to
+                # read or dismiss somebody else's notification.
+                Notification.user_id == user.id,
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise ApiError("E_NOT_FOUND", "no such notification")
+    row.read_at = case_service.now_utc()
+    await session.flush()
+
+
+@router.post(
+    "/notifications/read-all", status_code=status.HTTP_204_NO_CONTENT
+)
+async def mark_all_read(session: SessionDep, user: UserDep) -> None:
+    from sqlalchemy import update
+
+    from app.models import Notification
+
+    await session.execute(
+        update(Notification)
+        .where(
+            Notification.user_id == user.id,
+            Notification.read_at.is_(None),
+        )
+        .values(read_at=case_service.now_utc())
+    )
 
 
 # --- personal --------------------------------------------------------------

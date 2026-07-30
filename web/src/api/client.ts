@@ -8,12 +8,16 @@
 
 import type {
   ApiErrorBody,
+  AuditEvent,
   CaseDetail,
   CaseSummary,
   HealthCounts,
   Me,
   MyTask,
+  Notification,
   Preview,
+  Simulation,
+  TaskRun,
   TemplateDetail,
   TemplateHealth,
   TemplateListItem,
@@ -110,6 +114,35 @@ export const api = {
       `/cases/${caseId}/tasks/${taskId}/complete`,
       json(body),
     ),
+  insertTask: (caseId: number, body: unknown) =>
+    request<CaseDetail>(`/cases/${caseId}/tasks/insert`, json(body)),
+  deleteTask: (caseId: number, taskId: number, mode = "reconnect") =>
+    request<CaseDetail>(
+      `/cases/${caseId}/tasks/${taskId}/delete`,
+      json({ mode }),
+    ),
+  reopenTask: (caseId: number, taskId: number) =>
+    request<CaseDetail>(`/cases/${caseId}/tasks/${taskId}/reopen`, json({})),
+  retryTask: (caseId: number, taskId: number) =>
+    request<CaseDetail>(`/cases/${caseId}/tasks/${taskId}/retry`, json({})),
+  taskRuns: (caseId: number, taskId: number) =>
+    request<TaskRun[]>(`/cases/${caseId}/tasks/${taskId}/runs`),
+  simulate: (caseId: number, body: unknown) =>
+    request<Simulation>(`/cases/${caseId}/tasks/simulate`, json(body)),
+  resetBaseline: (caseId: number, note = "") =>
+    request<CaseDetail>(`/cases/${caseId}/reset-baseline`, json({ note })),
+  archiveCase: (caseId: number) =>
+    request<CaseDetail>(`/cases/${caseId}/archive`, json({})),
+  caseAudit: (caseId: number) =>
+    request<AuditEvent[]>(`/cases/${caseId}/audit`),
+
+  // notifications
+  notifications: (unreadOnly = false) =>
+    request<Notification[]>(`/notifications?unread_only=${unreadOnly}`),
+  markRead: (id: number) =>
+    request<void>(`/notifications/${id}/read`, { method: "POST" }),
+  markAllRead: () =>
+    request<void>("/notifications/read-all", { method: "POST" }),
 
   // personal
   myTasks: (includeGroup = false) =>
