@@ -182,8 +182,10 @@ describe("row geometry", () => {
     expect(summaryY(0) + SUMMARY_HEIGHT).toBeLessThanOrEqual(ROW_HEIGHT);
   });
 
-  it("makes a summary bar heavier than the tasks under it", () => {
-    expect(SUMMARY_HEIGHT).toBeGreaterThan(BAR_HEIGHT);
+  it("keeps the phase bar lighter than the tasks under it", () => {
+    // Deliberately this way round: the tasks are what people read and click,
+    // and the phase only marks their extent.
+    expect(SUMMARY_HEIGHT).toBeLessThan(BAR_HEIGHT);
   });
 
   it("centres both bars on the same row line", () => {

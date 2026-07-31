@@ -26,18 +26,26 @@ export interface Tick {
 
 const MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
 
-export const ROW_HEIGHT = 30;
-/** The thick bar that spans a whole phase. */
-export const SUMMARY_HEIGHT = 14;
-/** An individual task's bar, deliberately slimmer than its summary. */
-export const BAR_HEIGHT = 9;
+export const ROW_HEIGHT = 34;
+/**
+ * The phase bar: a thin plain rectangle spanning its tasks.
+ *
+ * Lighter than the tasks under it, not heavier. The tasks are the things
+ * people read and click; the phase is context, and it earns its place by
+ * spanning them rather than by outweighing them.
+ */
+export const SUMMARY_HEIGHT = 6;
+/** A task's bar. The heaviest mark on the chart, because it is the subject. */
+export const BAR_HEIGHT = 16;
+/** Corner radius for a task bar: rounded rectangle, not a capsule. */
+export const BAR_RADIUS = 5;
 /**
  * The baseline is a thin ghost under the forecast rather than a second bar of
  * equal weight. It is a reference, not a competing reading, and giving it the
  * same visual weight made every row look like two unrelated things.
  */
 export const BASELINE_HEIGHT = 3;
-export const BASELINE_GAP = 3;
+export const BASELINE_GAP = 2;
 
 export function timeToX(viewport: Viewport, at: Date | string): number {
   const moment = typeof at === "string" ? new Date(at) : at;

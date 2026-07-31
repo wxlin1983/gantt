@@ -26,6 +26,7 @@ import {
 } from "../../lib/format";
 import {
   BAR_HEIGHT,
+  BAR_RADIUS,
   BASELINE_HEIGHT,
   ROW_HEIGHT,
   SUMMARY_HEIGHT,
@@ -452,39 +453,18 @@ function SummaryBar({
           {owner}
         </text>
       )}
-      <path
-        d={summaryBracket(x, summaryY(row), width, SUMMARY_HEIGHT)}
+      {/* A plain thin rectangle. It marks the extent of the phase and gets
+          out of the way; the tasks below carry the weight. */}
+      <rect
+        x={x}
+        y={summaryY(row)}
+        width={width}
+        height={SUMMARY_HEIGHT}
+        rx={1}
         className="bar bar-summary"
       />
     </g>
   );
-}
-
-/**
- * The classic summary outline: a spine with both ends turned down.
- *
- * Not a solid pill. A phase holding one task finished early and the rest a
- * fortnight later spans most of the chart, and as a filled bar that reads as
- * a fortnight of continuous work. The turned-down ends say "this is the
- * extent of the things below", which is what a summary actually claims.
- */
-function summaryBracket(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): string {
-  const cap = Math.min(6, width / 2);
-  const spine = height / 2;
-  return [
-    `M ${x} ${y}`,
-    `H ${x + width}`,
-    `V ${y + height}`,
-    `L ${x + width - cap} ${y + spine}`,
-    `H ${x + cap}`,
-    `L ${x} ${y + height}`,
-    "Z",
-  ].join(" ");
 }
 
 function TaskBars({
@@ -545,7 +525,7 @@ function TaskBars({
               task.forecast_end,
             )}
             height={BAR_HEIGHT}
-            rx={BAR_HEIGHT / 2}
+            rx={BAR_RADIUS}
             className="bar bar-task"
           />
         )
