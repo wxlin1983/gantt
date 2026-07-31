@@ -100,7 +100,9 @@ export function TemplateEditor() {
 
   if (template.isLoading) return <p className="page muted">Loading…</p>;
 
-  const activeCases =
+  // Published only -- a brand new draft has none, and "0 versions" beside
+  // "draft v1" read as though the draft itself had not been saved.
+  const published =
     template.data?.versions.filter((v) => v.status === "published").length ?? 0;
   const dynamic = hasConditionalTasks(parsed ?? model);
 
@@ -111,7 +113,7 @@ export function TemplateEditor() {
         {template.data?.draft
           ? `draft v${template.data.draft.version} (unpublished)`
           : `v${template.data?.latest_version} published`}{" "}
-        · {activeCases} version{activeCases === 1 ? "" : "s"}
+        · {published} published version{published === 1 ? "" : "s"}
       </p>
 
       <div className="toolbar">

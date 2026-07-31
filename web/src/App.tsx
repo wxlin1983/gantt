@@ -10,6 +10,7 @@ import { CaseList } from "./features/cases/CaseList";
 import { CreateWizard } from "./features/cases/CreateWizard";
 import { MyTasks } from "./features/cases/MyTasks";
 import { NotificationBell } from "./features/cases/NotificationBell";
+import { NewTemplate } from "./features/templates/NewTemplate";
 import { TemplateEditor } from "./features/templates/TemplateEditor";
 import { TemplateList } from "./features/templates/TemplateList";
 
@@ -58,6 +59,8 @@ export function App() {
           <Route path="/cases/:id" element={<CaseDetailPage />} />
           <Route path="/my-tasks" element={<MyTasks />} />
           <Route path="/templates" element={<TemplateList />} />
+          {/* Before the dynamic segment: "new" is a screen, not a name. */}
+          <Route path="/templates/new" element={<NewTemplate />} />
           <Route path="/templates/:name" element={<TemplateEditor />} />
           <Route path="*" element={<p className="page">Not found</p>} />
         </Routes>

@@ -47,6 +47,9 @@ docker compose exec api gantt import examples/product_launch.yaml \
 
 打開 http://localhost:8080 ，用第 3 步建立的帳號登入。
 
+第 4 步只是為了讓畫面上有東西可看；之後要新增模板，模板庫頁面的 `[+ 新增模板]`
+可以直接貼 YAML，不必回到命令列。`gantt import` 收的是同一份文件格式。
+
 忘記密碼的話：密碼以 argon2id 雜湊儲存，讀不回來，只能改掉。
 
 ```bash

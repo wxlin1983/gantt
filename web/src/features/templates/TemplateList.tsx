@@ -10,13 +10,28 @@ export function TemplateList() {
     queryKey: ["templates"],
     queryFn: api.templates,
   });
+  // Already cached by the shell, so this costs nothing.
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const canManage = me.data?.user.is_template_admin ?? false;
 
   return (
     <section className="page">
-      <h1>Templates</h1>
+      <header className="page-head">
+        <h1>Templates</h1>
+        {canManage && (
+          <Link to="/templates/new" className="button primary">
+            + New template
+          </Link>
+        )}
+      </header>
       {templates.data?.length === 0 && (
         <div className="empty">
-          <p>No templates yet. Import one or create a draft via the API.</p>
+          <p>
+            No templates yet.{" "}
+            {canManage
+              ? "Create one, or import with `gantt import`."
+              : "A template admin needs to add one."}
+          </p>
         </div>
       )}
       <table className="table">

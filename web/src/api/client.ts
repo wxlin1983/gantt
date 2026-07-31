@@ -172,10 +172,15 @@ export const api = {
       credentials: "same-origin",
     }).then((response) => response.text()),
   importTemplate: (document: string) =>
-    request<{ template_name: string; draft_version: number }>(
-      "/templates/import",
-      json({ document }),
-    ),
+    request<{
+      template_name: string;
+      draft_version: number;
+      task_templates_created: string[];
+      /** Named in the document but already present with different content;
+       *  the existing one wins and is left untouched. */
+      task_templates_differing: string[];
+      missing_credentials: string[];
+    }>("/templates/import", json({ document })),
   taskTemplates: () =>
     request<{ name: string; display_name: string; task_api: string | null }[]>(
       "/task-templates",
