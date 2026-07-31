@@ -230,12 +230,40 @@ export function axisTiers(viewport: Viewport): AxisTiers {
     (viewport.to.getTime() - viewport.from.getTime()) / MS.day;
 
   if (days > 45) {
-    return { major: months(viewport), minor: weeks(viewport, false) };
+    return {
+      major: months(viewport),
+      minor: thin(weeks(viewport, false), viewport),
+    };
   }
   if (days > 8) {
-    return { major: weeks(viewport, true), minor: days_(viewport) };
+    return {
+      major: weeks(viewport, true),
+      minor: thin(days_(viewport), viewport),
+    };
   }
-  return { major: days_(viewport), minor: hours(viewport, 6) };
+  return { major: days_(viewport), minor: thin(hours(viewport, 3), viewport) };
+}
+
+/** Labels need room. Below it they overlap into an unreadable smear. */
+const MIN_LABEL_SPACING = 46;
+
+/**
+ * Drop every other tick until the labels fit.
+ *
+ * Generating at a fixed step and hoping meant a week-long case rendered
+ * four-hourly ticks 30px apart, which ran together into a grey band. Halving
+ * a regular series keeps it regular, which a "pick the next unit up" rule
+ * does not.
+ */
+function thin(series: Tick[], viewport: Viewport): Tick[] {
+  let result = series;
+  while (
+    result.length > 2 &&
+    viewport.width / (result.length - 1) < MIN_LABEL_SPACING
+  ) {
+    result = result.filter((_, index) => index % 2 === 0);
+  }
+  return result;
 }
 
 function months(viewport: Viewport): Tick[] {
@@ -339,39 +367,92 @@ export function elbowPath(
 
   if (Math.abs(dy) < 1) return `M ${from.x} ${from.y} H ${to.x}`;
 
-  const sweep = dy > 0 ? 1 : 0;
-  const step = dy > 0 ? radius : -radius;
+  // Long horizontal runs happen in the gutter between rows, never along a
+  // row's centre line. On its own row a connector spanning most of the chart
+  // is indistinguishable from a bar -- which is exactly what it looked like
+  // for a task completed far from its neighbours, where every edge touching
+  // it crosses the whole width. Crossing is left to the verticals, which
+  // nobody mistakes for a bar.
+  const channel = from.y + (dy > 0 ? ROW_HEIGHT / 2 : -ROW_HEIGHT / 2);
 
-  // Enough room to turn twice in the forward direction.
-  //
-  // The turn happens beside the *successor*, not just past the predecessor.
-  // Turning early put the long run on the successor's row, where a horizontal
-  // line the width of the chart reads as a bar; keeping it on the predecessor's
-  // row leaves it beside that bar, where it reads as "and then".
-  if (to.x - from.x > stub + radius * 2) {
-    const turn = to.x - stub;
-    return [
-      `M ${from.x} ${from.y}`,
-      `H ${turn - radius}`,
-      `A ${radius} ${radius} 0 0 ${sweep} ${turn} ${from.y + step}`,
-      `V ${to.y - step}`,
-      `A ${radius} ${radius} 0 0 ${sweep === 1 ? 0 : 1} ${turn + radius} ${to.y}`,
-      `H ${to.x}`,
-    ].join(" ");
+  return orthogonalPath(
+    [
+      from,
+      { x: from.x + stub, y: from.y },
+      { x: from.x + stub, y: channel },
+      { x: to.x - stub, y: channel },
+      { x: to.x - stub, y: to.y },
+      to,
+    ],
+    radius,
+  );
+}
+
+/**
+ * An orthogonal polyline with rounded corners.
+ *
+ * Waypoints must alternate horizontal and vertical; degenerate segments are
+ * dropped, so a caller can emit the general six-point route and let the
+ * straight cases collapse themselves rather than special-casing each shape.
+ */
+export function orthogonalPath(
+  points: { x: number; y: number }[],
+  radius = 5,
+): string {
+  const via = points.filter(
+    (point, index) =>
+      index === 0 ||
+      Math.abs(point.x - points[index - 1]!.x) > 0.5 ||
+      Math.abs(point.y - points[index - 1]!.y) > 0.5,
+  );
+  if (via.length < 2) return "";
+
+  const parts = [`M ${round(via[0]!.x)} ${round(via[0]!.y)}`];
+  for (let index = 1; index < via.length; index += 1) {
+    const previous = via[index - 1]!;
+    const current = via[index]!;
+    const next = via[index + 1];
+    if (!next) {
+      parts.push(lineTo(previous, current));
+      break;
+    }
+    // Stop short of the corner, arc through it, and resume on the next leg.
+    const into = shorten(current, previous, radius);
+    const outOf = shorten(current, next, radius);
+    parts.push(lineTo(previous, into));
+    parts.push(
+      `Q ${round(current.x)} ${round(current.y)} ` +
+        `${round(outOf.x)} ${round(outOf.y)}`,
+    );
+    via[index] = outOf;
   }
+  return parts.join(" ");
+}
 
-  // The successor starts at or before the predecessor ends, so the connector
-  // has to double back rather than cut through the bars.
-  const back = from.x + stub;
-  const mid = from.y + dy / 2;
-  return [
-    `M ${from.x} ${from.y}`,
-    `H ${back}`,
-    `V ${mid}`,
-    `H ${to.x - stub}`,
-    `V ${to.y}`,
-    `H ${to.x}`,
-  ].join(" ");
+function lineTo(from: { x: number; y: number }, to: { x: number; y: number }) {
+  if (Math.abs(to.y - from.y) < 0.5) return `H ${round(to.x)}`;
+  if (Math.abs(to.x - from.x) < 0.5) return `V ${round(to.y)}`;
+  return `L ${round(to.x)} ${round(to.y)}`;
+}
+
+/** A point `by` pixels from `corner` along the way to `towards`. */
+function shorten(
+  corner: { x: number; y: number },
+  towards: { x: number; y: number },
+  by: number,
+): { x: number; y: number } {
+  const dx = towards.x - corner.x;
+  const dy = towards.y - corner.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const step = Math.min(by, length / 2);
+  return {
+    x: corner.x + (dx / length) * step,
+    y: corner.y + (dy / length) * step,
+  };
+}
+
+function round(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 /* --- grouping ------------------------------------------------------------- */

@@ -15,6 +15,7 @@ import {
   rowCentre,
   spanWidth,
   summaryY,
+  orthogonalPath,
   ticks,
   timeToX,
   visibleRows,
@@ -252,6 +253,63 @@ describe("axisTiers", () => {
   });
 });
 
+/** Horizontal segments of a path, as `{y, length}`, ignoring the corners. */
+function horizontalRuns(d: string): { y: number; length: number }[] {
+  const runs: { y: number; length: number }[] = [];
+  const tokens = d.trim().split(/\s+/);
+  let x = 0;
+  let y = 0;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const command = tokens[i]!;
+    if (command === "M" || command === "L") {
+      const nx = Number(tokens[i + 1]);
+      const ny = Number(tokens[i + 2]);
+      if (command === "L" && Math.abs(ny - y) < 0.5) {
+        runs.push({ y, length: Math.abs(nx - x) });
+      }
+      [x, y] = [nx, ny];
+      i += 2;
+    } else if (command === "H") {
+      const nx = Number(tokens[i + 1]);
+      runs.push({ y, length: Math.abs(nx - x) });
+      x = nx;
+      i += 1;
+    } else if (command === "V") {
+      y = Number(tokens[i + 1]);
+      i += 1;
+    } else if (command === "Q") {
+      // Corner: only its endpoint matters for tracking position.
+      x = Number(tokens[i + 3]);
+      y = Number(tokens[i + 4]);
+      i += 4;
+    }
+  }
+  return runs;
+}
+
+describe("orthogonalPath", () => {
+  it("drops degenerate segments", () => {
+    const d = orthogonalPath([
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      { x: 50, y: 0 },
+    ]);
+    expect(d).toBe("M 0 0 H 50");
+  });
+
+  it("only ever moves along one axis at a time", () => {
+    const d = orthogonalPath([
+      { x: 0, y: 0 },
+      { x: 40, y: 0 },
+      { x: 40, y: 60 },
+      { x: 90, y: 60 },
+    ]);
+    // An L would mean a diagonal, which is not an orthogonal route
+    expect(d).not.toContain("L");
+    expect(d).toContain("Q");
+  });
+});
+
 describe("elbowPath", () => {
   it("is orthogonal, not curved", () => {
     const d = elbowPath({ x: 10, y: 10 }, { x: 200, y: 40 });
@@ -282,13 +340,31 @@ describe("elbowPath", () => {
     expect(elbowPath({ x: 0, y: 100 }, { x: 200, y: 10 })).toContain("V");
   });
 
-  it("keeps the long run on the predecessor's row", () => {
-    // Turning early laid a chart-wide horizontal along the successor's row,
-    // where a line that long reads as a bar. The drop belongs beside the
-    // successor, leaving the run next to the bar it comes from.
-    const d = elbowPath({ x: 10, y: 10 }, { x: 800, y: 40 });
-    const firstRun = Number(d.split("H ")[1]!.split(" ")[0]);
-    expect(firstRun).toBeGreaterThan(700);
+  it("runs long spans in the gutter, never along a row", () => {
+    // A connector spanning most of the chart at a row's centre line is
+    // indistinguishable from a bar, which is what a task completed far from
+    // its neighbours produced on every edge that touched it.
+    const from = { x: 10, y: 100 };
+    const to = { x: 900, y: 220 };
+    const d = elbowPath(from, to);
+    const longRun = horizontalRuns(d).sort((a, b) => b.length - a.length)[0]!;
+    expect(longRun.length).toBeGreaterThan(700);
+    expect(Math.abs(longRun.y - from.y)).toBeGreaterThan(BAR_HEIGHT);
+    expect(Math.abs(longRun.y - to.y)).toBeGreaterThan(BAR_HEIGHT);
+  });
+
+  it("puts the gutter between the two rows, not beyond them", () => {
+    const d = elbowPath({ x: 10, y: 100 }, { x: 900, y: 220 });
+    const longRun = horizontalRuns(d).sort((a, b) => b.length - a.length)[0]!;
+    expect(longRun.y).toBeGreaterThan(100);
+    expect(longRun.y).toBeLessThan(220);
+  });
+
+  it("routes upwards the same way", () => {
+    const d = elbowPath({ x: 10, y: 220 }, { x: 900, y: 100 });
+    const longRun = horizontalRuns(d).sort((a, b) => b.length - a.length)[0]!;
+    expect(longRun.y).toBeLessThan(220);
+    expect(longRun.y).toBeGreaterThan(100);
   });
 });
 

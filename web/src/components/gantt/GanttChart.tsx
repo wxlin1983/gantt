@@ -121,7 +121,7 @@ export function GanttChart({
   }, [rows]);
 
   const viewport: Viewport = useMemo(() => {
-    const { from, to } = paddedRange([
+    const planned = [
       ...detail.tasks.flatMap((task) => [
         task.baseline_start,
         task.baseline_end,
@@ -129,8 +129,21 @@ export function GanttChart({
         task.forecast_end,
       ]),
       detail.target_date,
-      new Date().toISOString(),
-    ]);
+    ];
+    const work = paddedRange(planned);
+    // `now` earns a place in the frame only when it is near the work. A case
+    // planned to start in two months was otherwise drawn as two months of
+    // empty grid with every bar crushed into the last few pixels -- truthful,
+    // and useless as a chart. When it falls outside, the marker is pinned to
+    // the edge instead of vanishing.
+    const now = Date.now();
+    const span = work.to.getTime() - work.from.getTime();
+    const near =
+      now >= work.from.getTime() - span * 0.25 &&
+      now <= work.to.getTime() + span * 0.25;
+    const { from, to } = near
+      ? paddedRange([...planned, new Date(now).toISOString()])
+      : work;
     return { from, to, width };
   }, [detail.tasks, detail.target_date, width]);
 
@@ -225,11 +238,20 @@ export function GanttChart({
           <g className="gantt-axis">
             {tiers.major.map((tick, index) => {
               const next = tiers.major[index + 1];
-              const right = next ? next.x : width;
+              const right = Math.min(next ? next.x : width, width);
+              const left = Math.max(tick.x, 0);
+              // A span clipped by the chart edge has nowhere to put its name;
+              // half a word ("Octobe") is worse than none. Wide enough spans
+              // keep their centre inside the plot so the text cannot overrun.
+              if (right - left < 44) return null;
+              const pad = 34;
               return (
                 <text
                   key={`ML${tick.at.toISOString()}`}
-                  x={(Math.max(tick.x, 0) + right) / 2}
+                  x={Math.min(
+                    Math.max((left + right) / 2, pad),
+                    width - pad,
+                  )}
                   y={20}
                   className="axis-major"
                 >
@@ -591,7 +613,27 @@ function Marker({
   label: string;
 }) {
   const x = timeToX(viewport, at);
-  if (x < 0 || x > viewport.width) return null;
+
+  // Pinned to the edge it fell off rather than dropped. On a case whose work
+  // starts months out, "now" is off the left of the frame, and simply not
+  // drawing it left no way to tell whether today was before or after the plan.
+  if (x < 0 || x > viewport.width) {
+    const before = x < 0;
+    const edge = before ? 0 : viewport.width;
+    return (
+      <g className={`${className} off-frame`}>
+        <line x1={edge} x2={edge} y1={0} y2={height} />
+        <text
+          x={before ? edge + 6 : edge - 6}
+          y={12}
+          textAnchor={before ? "start" : "end"}
+        >
+          {before ? `◀ ${label}` : `${label} ▶`}
+        </text>
+      </g>
+    );
+  }
+
   return (
     <g className={className}>
       <line x1={x} x2={x} y1={0} y2={height} />

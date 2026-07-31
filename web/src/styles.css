@@ -746,6 +746,13 @@ textarea {
   stroke-dasharray: 4 3;
 }
 
+/* Pinned to the edge because it falls outside the framed range: dashed, so it
+   is not read as a real position on this axis. */
+.off-frame line {
+  stroke-dasharray: 3 4;
+  opacity: 0.7;
+}
+
 .marker-now text,
 .marker-target text,
 .marker-original text {
