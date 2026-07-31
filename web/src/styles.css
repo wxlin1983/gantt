@@ -301,6 +301,17 @@ textarea {
   background: var(--primary-soft);
 }
 
+/* Health reads as a labelled chip, not a coloured dot: the word carries the
+   meaning and the colour only reinforces it (design.md §13). */
+.health {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -851,19 +862,30 @@ textarea {
 
 /* --- misc --------------------------------------------------------------- */
 
+/* Cards rather than a thin band of small text. These are the three numbers
+   the page exists to report, and as a hairline strip they read as a caption
+   under the title instead of as the headline. */
 .case-metrics {
-  display: flex;
-  gap: 32px;
-  flex-wrap: wrap;
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  margin: 12px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
 }
 
 .case-metrics > div {
   display: grid;
-  gap: 3px;
+  gap: 5px;
+  align-content: start;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+
+.case-metrics strong {
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.2;
 }
 
 .task-feed {

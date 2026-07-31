@@ -80,15 +80,22 @@ def _overshoot(case: GanttCase) -> int:
     return max(int(delta), 0)
 
 
-def _summary(case: GanttCase) -> CaseSummaryOut:
+def _summary(
+    case: GanttCase, people: dict[int, str] | None = None
+) -> CaseSummaryOut:
+    derived = {"blocked_on", "exceeds_target_by_seconds", "owner_name"}
     return CaseSummaryOut(
         **{
             field: getattr(case, field)
             for field in CaseSummaryOut.model_fields
-            if field not in {"blocked_on", "exceeds_target_by_seconds"}
+            if field not in derived
         },
         blocked_on=_blocked_on(case),
         exceeds_target_by_seconds=_overshoot(case),
+        # Carried on the row rather than as a lookup table beside it: a list
+        # response is a plain array, and one short string per row costs less
+        # than wrapping the whole thing in an envelope to hold the map.
+        owner_name=(people or {}).get(case.owner_id or -1, ""),
     )
 
 
@@ -277,7 +284,18 @@ async def list_cases(
             case.target_date,
         ),
     )
-    return [_summary(case) for case in ranked]
+    owner_ids = {case.owner_id for case in ranked if case.owner_id is not None}
+    people = (
+        {
+            user.id: user.display_name or user.username
+            for user in await session.scalars(
+                select(User).where(User.id.in_(owner_ids))
+            )
+        }
+        if owner_ids
+        else {}
+    )
+    return [_summary(case, people) for case in ranked]
 
 
 # --- single case -----------------------------------------------------------

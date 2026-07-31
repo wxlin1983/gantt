@@ -76,6 +76,8 @@ export interface CaseSummary {
   progress_ratio: number | null;
   buffer_consumed_ratio: number | null;
   owner_id: number | null;
+  /** Resolved server-side; empty when the case has no owner. */
+  owner_name: string;
   created_at: string;
   blocked_on: string[];
   exceeds_target_by_seconds: number;

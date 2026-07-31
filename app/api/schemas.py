@@ -147,6 +147,9 @@ class CaseSummaryOut(Out):
     progress_ratio: float | None
     buffer_consumed_ratio: float | None
     owner_id: int | None
+    #: Resolved on the row so the list can name a person rather than print an
+    #: id; empty when the case has no owner.
+    owner_name: str = ""
     created_at: datetime
     #: Which task the case is waiting on, so the list answers "stuck where?"
     #: without opening the case (design.md §8.2).

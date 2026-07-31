@@ -106,8 +106,9 @@ export function CaseList() {
       <table className="table">
         <thead>
           <tr>
-            <th />
+            <th>Health</th>
             <th>Case</th>
+            <th>Owner</th>
             <th>Template</th>
             <th>Progress</th>
             <th>Target</th>
@@ -118,12 +119,15 @@ export function CaseList() {
           {(cases.data ?? []).map((row) => (
             <tr key={row.id}>
               <td>
+                {/* Named, not just coloured. A bare dot in an unlabelled
+                    column carries the whole reading in its hue, which
+                    design.md §13 rules out. */}
                 {row.health && (
-                  <span
-                    className={`dot tone-${HEALTH_META[row.health].tone}`}
-                    title={HEALTH_META[row.health].label}
-                  >
-                    {HEALTH_META[row.health].icon}
+                  <span className={`health tone-${HEALTH_META[row.health].tone}`}>
+                    <span aria-hidden="true">
+                      {HEALTH_META[row.health].icon}
+                    </span>
+                    {HEALTH_META[row.health].label}
                   </span>
                 )}
               </td>
@@ -139,6 +143,9 @@ export function CaseList() {
                     : row.status}
                 </div>
               </td>
+              {/* "Who do I chase" is the other half of "stuck where", and it
+                  was only answerable by opening the case. */}
+              <td className="muted">{row.owner_name || "unassigned"}</td>
               <td className="muted">
                 {row.template_name} v{row.template_version}
               </td>

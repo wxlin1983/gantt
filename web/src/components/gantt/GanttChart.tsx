@@ -444,6 +444,7 @@ function SummaryBar({
   owner: string | null;
 }) {
   const x = timeToX(viewport, span.from);
+  const width = spanWidth(viewport, span.from, span.to);
   return (
     <g className={`summary hue-${span.colour}`}>
       {owner && (
@@ -451,16 +452,39 @@ function SummaryBar({
           {owner}
         </text>
       )}
-      <rect
-        x={x}
-        y={summaryY(row)}
-        width={spanWidth(viewport, span.from, span.to)}
-        height={SUMMARY_HEIGHT}
-        rx={SUMMARY_HEIGHT / 2}
+      <path
+        d={summaryBracket(x, summaryY(row), width, SUMMARY_HEIGHT)}
         className="bar bar-summary"
       />
     </g>
   );
+}
+
+/**
+ * The classic summary outline: a spine with both ends turned down.
+ *
+ * Not a solid pill. A phase holding one task finished early and the rest a
+ * fortnight later spans most of the chart, and as a filled bar that reads as
+ * a fortnight of continuous work. The turned-down ends say "this is the
+ * extent of the things below", which is what a summary actually claims.
+ */
+function summaryBracket(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): string {
+  const cap = Math.min(6, width / 2);
+  const spine = height / 2;
+  return [
+    `M ${x} ${y}`,
+    `H ${x + width}`,
+    `V ${y + height}`,
+    `L ${x + width - cap} ${y + spine}`,
+    `H ${x + cap}`,
+    `L ${x} ${y + height}`,
+    "Z",
+  ].join(" ");
 }
 
 function TaskBars({
@@ -540,14 +564,17 @@ function TaskBars({
         />
       )}
 
-      {delta !== null && Math.abs(delta) >= 3600 && task.forecast_end && (
+      {/* Only lateness is labelled. Running early against an as-late-as-
+          possible plan just means the task has slack, and printing "−19d 13h"
+          beside four of six bars buried the one number worth reading. The
+          full variance stays in the list view, where it has a column. */}
+      {late && delta >= 3600 && task.forecast_end && (
         <text
           x={timeToX(viewport, task.forecast_end) + 7}
           y={rowCentre(row) + 3}
-          className={late ? "delta delta-late" : "delta"}
+          className="delta delta-late"
         >
-          {late ? "+" : "−"}
-          {formatSpan(delta)}
+          +{formatSpan(delta)}
         </text>
       )}
     </g>
