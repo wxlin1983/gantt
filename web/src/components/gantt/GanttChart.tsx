@@ -122,15 +122,27 @@ export function GanttChart({
   }, [rows]);
 
   const viewport: Viewport = useMemo(() => {
-    const planned = [
-      ...detail.tasks.flatMap((task) => [
-        task.baseline_start,
-        task.baseline_end,
-        task.forecast_start,
-        task.forecast_end,
-      ]),
-      detail.target_date,
-    ];
+    // Framed on the forecast: what is going to happen. The baseline is
+    // as-late-as-possible, so on any case with slack it sits bunched against
+    // the target -- including it stretched the frame to the deadline and
+    // squeezed a week of real work into a fifth of the width, with the
+    // baselines left as detached grey stubs a fortnight away. The target and
+    // today still show, pinned to whichever edge they fall off.
+    const forecast = detail.tasks.flatMap((task) => [
+      task.forecast_start,
+      task.forecast_end,
+    ]);
+    const anything = forecast.some(Boolean)
+      ? forecast
+      : // A case whose tasks have no forecast at all has only its plan.
+        [
+          ...detail.tasks.flatMap((task) => [
+            task.baseline_start,
+            task.baseline_end,
+          ]),
+          detail.target_date,
+        ];
+    const planned = anything;
     const work = paddedRange(planned);
     // `now` earns a place in the frame only when it is near the work. A case
     // planned to start in two months was otherwise drawn as two months of
@@ -284,15 +296,18 @@ export function GanttChart({
           </g>
 
           <g transform={`translate(0, ${AXIS})`}>
-            {detail.buffer_seconds > 0 && (
-              <BufferBlock
-                viewport={viewport}
-                from={planDeadline}
-                to={new Date(detail.target_date)}
-                height={height}
-                consumed={detail.buffer_consumed_ratio ?? 0}
-              />
-            )}
+            {/* Skipped when the buffer sits entirely beyond the frame, which
+                it does whenever the case is running well ahead of plan. */}
+            {detail.buffer_seconds > 0 &&
+              timeToX(viewport, planDeadline) < width && (
+                <BufferBlock
+                  viewport={viewport}
+                  from={planDeadline}
+                  to={new Date(detail.target_date)}
+                  height={height}
+                  consumed={detail.buffer_consumed_ratio ?? 0}
+                />
+              )}
 
             {/* A rule under each group, as in the reference: it separates the
                 phases without needing a box around each one. */}
@@ -489,6 +504,12 @@ function TaskBars({
   const delta = variance(task);
   const late = delta !== null && delta > 0;
 
+  const baselineVisible =
+    task.baseline_start !== null &&
+    task.baseline_end !== null &&
+    timeToX(viewport, task.baseline_end) > 0 &&
+    timeToX(viewport, task.baseline_start) < viewport.width;
+
   return (
     <g
       className={[
@@ -532,8 +553,11 @@ function TaskBars({
       )}
 
       {/* No baseline means the task was inserted after the case began, so
-          there is nothing to compare it against (§5.10). */}
-      {task.baseline_start && task.baseline_end && (
+          there is nothing to compare it against (§5.10). One that falls wholly
+          outside the frame is dropped rather than clipped to the edge: it is a
+          reference for the bar it sits under, and a stub with no bar near it
+          reads as debris. */}
+      {task.baseline_start && task.baseline_end && baselineVisible && (
         <rect
           x={timeToX(viewport, task.baseline_start)}
           y={baselineY(row)}
@@ -627,6 +651,12 @@ function Marker({
   if (x < 0 || x > viewport.width) {
     const before = x < 0;
     const edge = before ? 0 : viewport.width;
+    // How far off, not just which side. "target ▶" alone hides the three
+    // weeks of slack that put it off the frame in the first place.
+    const away = before
+      ? viewport.from.getTime() - at.getTime()
+      : at.getTime() - viewport.to.getTime();
+    const gap = formatSpan(away / 1000);
     return (
       <g className={`${className} off-frame`}>
         <line x1={edge} x2={edge} y1={0} y2={height} />
@@ -635,7 +665,7 @@ function Marker({
           y={12}
           textAnchor={before ? "start" : "end"}
         >
-          {before ? `◀ ${label}` : `${label} ▶`}
+          {before ? `◀ ${gap} ${label}` : `${label} ${gap} ▶`}
         </text>
       </g>
     );
