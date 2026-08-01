@@ -48,6 +48,17 @@ class Principal:
 # --- viewing ---------------------------------------------------------------
 
 
+def can_manage_people(principal: Principal) -> bool:
+    """Add and edit users and groups.
+
+    Gated on the same flag as template administration. The system has one
+    administrator bit, and inventing a second one to distinguish "may edit a
+    flow" from "may add a colleague" would be modelling a separation nobody
+    has asked for. This function is the seam if that changes.
+    """
+    return principal.is_active and principal.is_template_admin
+
+
 def can_view(principal: Principal) -> bool:
     """Any active user may read any case or template.
 

@@ -253,3 +253,34 @@ export interface AuditEvent {
   before_state: Record<string, unknown> | null;
   after_state: Record<string, unknown> | null;
 }
+
+export interface GroupMembership {
+  group_id: number;
+  is_lead: boolean;
+}
+
+/** A directory entry. The password hash never leaves the server. */
+export interface Person {
+  id: number;
+  username: string;
+  display_name: string;
+  email: string;
+  is_active: boolean;
+  is_template_admin: boolean;
+  has_password: boolean;
+  memberships: GroupMembership[];
+}
+
+export interface GroupMember {
+  user_id: number;
+  username: string;
+  display_name: string;
+  is_lead: boolean;
+}
+
+export interface GroupDetail {
+  id: number;
+  name: string;
+  display_name: string;
+  members: GroupMember[];
+}

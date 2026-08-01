@@ -317,6 +317,26 @@ textarea {
   font-weight: 600;
 }
 
+/* A row of fields that adds one thing, sitting under the table it adds to.
+   Cheaper than a dialog for something with three short inputs. */
+.inline-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 10px 0 22px;
+}
+
+.inline-form input {
+  min-width: 150px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;

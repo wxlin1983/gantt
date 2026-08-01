@@ -300,3 +300,75 @@ class AuditEventOut(Out):
     created_at: datetime
     before_state: dict[str, Any] | None
     after_state: dict[str, Any] | None
+
+
+# --- directory -------------------------------------------------------------
+
+
+class GroupMembershipOut(BaseModel):
+    group_id: int
+    is_lead: bool
+
+
+class PersonOut(Out):
+    id: int
+    username: str
+    display_name: str
+    email: str
+    is_active: bool
+    is_template_admin: bool
+    #: Whether a local password is set. The hash itself never leaves the
+    #: server, but "can this person sign in at all" is worth showing.
+    has_password: bool = False
+    memberships: list[GroupMembershipOut] = Field(default_factory=list)
+
+
+class CreateUserRequest(Body):
+    username: str = Field(min_length=1, max_length=64)
+    display_name: str = ""
+    email: str = Field(default="", max_length=256)
+    password: str | None = Field(default=None, min_length=8)
+    is_template_admin: bool = False
+
+
+class UpdateUserRequest(Body):
+    display_name: str | None = Field(default=None, max_length=128)
+    email: str | None = Field(default=None, max_length=256)
+    is_template_admin: bool | None = None
+    is_active: bool | None = None
+
+
+class SetPasswordRequest(Body):
+    password: str = Field(min_length=8)
+
+
+class GroupMemberOut(BaseModel):
+    user_id: int
+    username: str
+    display_name: str
+    is_lead: bool
+
+
+class GroupOut(BaseModel):
+    id: int
+    name: str
+    display_name: str
+    members: list[GroupMemberOut] = Field(default_factory=list)
+
+
+class CreateGroupRequest(Body):
+    name: str = Field(min_length=1, max_length=64)
+    display_name: str = ""
+
+
+class UpdateGroupRequest(Body):
+    display_name: str | None = Field(default=None, max_length=128)
+
+
+class MemberRequest(Body):
+    user_id: int
+    is_lead: bool = False
+
+
+class SetMembersRequest(Body):
+    members: list[MemberRequest] = Field(default_factory=list)

@@ -64,6 +64,7 @@ export function CreateWizard() {
     queryKey: ["templates"],
     queryFn: api.templates,
   });
+  const people = useQuery({ queryKey: ["users"], queryFn: api.users });
   const template = useQuery({
     queryKey: ["template", templateName],
     queryFn: () => api.template(templateName!),
@@ -244,13 +245,24 @@ export function CreateWizard() {
             <label key={role.name}>
               {role.display_name || role.name}
               {role.required !== false && " *"}
-              <input
+              {/* A list, not a text field. Typing a username here was how a
+                  case came to be assigned to nobody: the name matched no user,
+                  resolution found no one, and every task came out unowned. */}
+              <select
                 value={roles[role.name] ?? ""}
-                placeholder="username"
                 onChange={(event) =>
                   setRoles({ ...roles, [role.name]: event.target.value })
                 }
-              />
+              >
+                <option value="">Choose someone…</option>
+                {(people.data ?? [])
+                  .filter((person) => person.is_active)
+                  .map((person) => (
+                    <option key={person.id} value={person.username}>
+                      {person.display_name} ({person.username})
+                    </option>
+                  ))}
+              </select>
               {role.default_group && (
                 <span className="muted small">
                   usually from {role.default_group}

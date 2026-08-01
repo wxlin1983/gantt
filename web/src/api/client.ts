@@ -11,10 +11,12 @@ import type {
   AuditEvent,
   CaseDetail,
   CaseSummary,
+  GroupDetail,
   HealthCounts,
   Me,
   MyTask,
   Notification,
+  Person,
   Preview,
   Simulation,
   TaskRun,
@@ -181,6 +183,33 @@ export const api = {
       task_templates_differing: string[];
       missing_credentials: string[];
     }>("/templates/import", json({ document })),
+  // directory
+  users: () => request<Person[]>("/users"),
+  createUser: (body: Record<string, unknown>) =>
+    request<Person>("/users", json(body)),
+  updateUser: (id: number, body: Record<string, unknown>) =>
+    request<Person>(`/users/${id}`, { ...json(body), method: "PATCH" }),
+  setUserPassword: (id: number, password: string) =>
+    request<void>(`/users/${id}/password`, {
+      ...json({ password }),
+      method: "PUT",
+    }),
+  groups: () => request<GroupDetail[]>("/groups"),
+  createGroup: (body: Record<string, unknown>) =>
+    request<GroupDetail>("/groups", json(body)),
+  updateGroup: (id: number, body: Record<string, unknown>) =>
+    request<GroupDetail>(`/groups/${id}`, { ...json(body), method: "PATCH" }),
+  setGroupMembers: (
+    id: number,
+    members: { user_id: number; is_lead: boolean }[],
+  ) =>
+    request<GroupDetail>(`/groups/${id}/members`, {
+      ...json({ members }),
+      method: "PUT",
+    }),
+  deleteGroup: (id: number) =>
+    request<void>(`/groups/${id}`, { method: "DELETE" }),
+
   taskTemplates: () =>
     request<{ name: string; display_name: string; task_api: string | null }[]>(
       "/task-templates",

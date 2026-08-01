@@ -1465,6 +1465,24 @@ DELETE /templates/{name}/schedule
 POST   /templates/{name}/schedule/run-now  立即依排程設定建立一個 case
 ```
 
+**人員與群組**（§7.1）
+
+讀取只要登入即可——建立 case 的精靈需要這份名單來提供角色人選；寫入一律需要管理員。
+
+```
+GET    /users                              目錄清單（不含密碼雜湊）
+POST   /users                              新增使用者
+PATCH  /users/{id}                         顯示名稱／email／管理員／啟用狀態
+PUT    /users/{id}/password                設定密碼
+GET    /groups                             群組與成員
+POST   /groups
+PATCH  /groups/{id}                        僅顯示名稱；`name` 不可改
+PUT    /groups/{id}/members                整批取代成員清單
+DELETE /groups/{id}                        僅限沒有任務指向它時
+```
+
+沒有「刪除使用者」。既有 case 記錄著誰負責過什麼，停用（`is_active`）保留那段記錄，刪除會摧毀它。`PATCH /users/{id}` 也拒絕讓呼叫者停用自己或取消自己的管理員權限（`E_SELF_LOCKOUT`）——那是一鍵造成、除了開 shell 沒別的辦法挽回的錯誤。
+
 **Task 模板**
 
 ```

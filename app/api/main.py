@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.execution.registry import load_builtin_handlers
 
 from . import errors
-from .routers import auth, callbacks, cases, templates
+from .routers import auth, callbacks, cases, directory, templates
 
 API_PREFIX = "/api/v1"
 
@@ -41,6 +41,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(cases.router, prefix=API_PREFIX)
+    app.include_router(directory.router, prefix=API_PREFIX)
     app.include_router(templates.router, prefix=API_PREFIX)
     app.include_router(callbacks.router, prefix=API_PREFIX)
 
