@@ -141,6 +141,32 @@ class TestCreate:
             await make_case(session, seeded, role_assignments={})
         assert exc.value.code == "E_MISSING_ROLE"
 
+    async def test_role_assigned_to_a_nonexistent_user_is_refused(
+        self, session, seeded
+    ):
+        """The DSL can only see that *a* name was given, not whose it is.
+
+        Without this the case was created, owner resolution silently found
+        nobody, and every task came out unassigned with nothing saying why.
+        """
+        with pytest.raises(CaseError) as exc:
+            await make_case(
+                session,
+                seeded,
+                role_assignments={"owner": "nobody", "tester": "qa"},
+            )
+        assert exc.value.code == "E_UNKNOWN_USER"
+        # Names the one that is wrong, not just that something is
+        assert "nobody" in str(exc.value)
+        assert "qa" not in str(exc.value)
+
+    async def test_a_valid_assignment_resolves_to_a_real_owner(
+        self, session, seeded
+    ):
+        case = await make_case(session, seeded)
+        owners = {task.name: task.owner_id for task in case.tasks}
+        assert all(owner is not None for owner in owners.values()), owners
+
     async def test_parameter_out_of_range_is_refused(self, session, seeded):
         with pytest.raises(CaseError) as exc:
             await make_case(session, seeded, params={"test_hours": 500})

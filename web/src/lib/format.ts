@@ -111,6 +111,28 @@ export function isInstant(task: {
   return Date.parse(task.forecast_start) === Date.parse(task.forecast_end);
 }
 
+/**
+ * Who a task belongs to, or why nobody does.
+ *
+ * `owner_source` records what the template asked for -- `role:pm`,
+ * `group_lead:qa` -- and survives even when resolution found no one. Printing
+ * a bare blank in that case hides the reason: the role was assigned to a name
+ * that matches no user, or the group has no lead yet. Saying which role is
+ * still waiting turns a gap into something actionable.
+ */
+export function ownerLabel(
+  task: { owner_id: number | null; owner_source: string },
+  people: Record<string, string>,
+): string {
+  if (task.owner_id !== null) {
+    return people[String(task.owner_id)] ?? `#${task.owner_id}`;
+  }
+  const [kind, target] = task.owner_source.split(":");
+  if (kind === "role" && target) return `unassigned · ${target}`;
+  if (kind === "group_lead" && target) return `unassigned · ${target} lead`;
+  return "unassigned";
+}
+
 export function variance(task: {
   baseline_end: string | null;
   forecast_end: string | null;

@@ -313,6 +313,8 @@ async def create(
             # are eagerly present, exactly as on the creating path.
             return await load(session, existing)
 
+    await _assert_assignees_exist(session, role_assignments or {})
+
     template_row = await published_template(
         session, template_name, template_version
     )
@@ -371,6 +373,30 @@ async def create(
         },
     )
     return case
+
+
+async def _assert_assignees_exist(
+    session: AsyncSession, role_assignments: dict[str, str]
+) -> None:
+    """Every assigned role must name a user who exists.
+
+    `resolve_roles` runs in the DSL layer, which has no database: it can only
+    see that *a* name was supplied for each required role, not whether anyone
+    answers to it. Without this check, owner resolution quietly found nobody
+    and left every `owner_id` NULL -- a case created with a mistyped username
+    looked complete, scheduled correctly, and was assigned to no one, with
+    nothing anywhere saying so.
+    """
+    names = {name for name in role_assignments.values() if name}
+    if not names:
+        return
+    found = await identity.users_by_name(session, names)
+    missing = sorted(names - set(found))
+    if missing:
+        raise CaseError(
+            "E_UNKNOWN_USER",
+            "no such user: " + ", ".join(f"`{name}`" for name in missing),
+        )
 
 
 async def _materialise(

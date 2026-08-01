@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDuration, formatSpan, isInstant, variance } from "./format";
+import {
+  formatDuration,
+  formatSpan,
+  isInstant,
+  ownerLabel,
+  variance,
+} from "./format";
 
 describe("formatSpan", () => {
   it("reads a measured difference in units people use", () => {
@@ -68,5 +74,33 @@ describe("variance", () => {
         forecast_end: "2026-08-01T04:00:00Z",
       }),
     ).toBe(14_400);
+  });
+});
+
+describe("ownerLabel", () => {
+  it("names the person when there is one", () => {
+    expect(
+      ownerLabel({ owner_id: 3, owner_source: "role:pm" }, { "3": "Alice" }),
+    ).toBe("Alice");
+  });
+
+  it("says which role is still waiting when nobody resolved", () => {
+    // A blank hides the reason; the role name is the actionable part
+    expect(ownerLabel({ owner_id: null, owner_source: "role:pm" }, {})).toBe(
+      "unassigned · pm",
+    );
+    expect(
+      ownerLabel({ owner_id: null, owner_source: "group_lead:qa" }, {}),
+    ).toBe("unassigned · qa lead");
+  });
+
+  it("falls back to plain unassigned when the source says nothing", () => {
+    expect(ownerLabel({ owner_id: null, owner_source: "literal" }, {})).toBe(
+      "unassigned",
+    );
+  });
+
+  it("shows the id when the name map is missing an entry", () => {
+    expect(ownerLabel({ owner_id: 7, owner_source: "manual" }, {})).toBe("#7");
   });
 });

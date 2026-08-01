@@ -23,6 +23,7 @@ import {
   formatMoment,
   formatSpan,
   isInstant,
+  ownerLabel,
   variance,
 } from "../../lib/format";
 import {
@@ -134,7 +135,7 @@ export function GanttChart({
             key,
             label: span.label,
             colour,
-            owner: ownerLabel(detail, key),
+            owner: phaseOwner(detail, key),
           });
         }
         current = key;
@@ -523,11 +524,7 @@ export function GanttChart({
                       hovered !== null && !connected.has(row.task.name)
                     }
                     showCriticalPath={showCriticalPath}
-                    owner={
-                      row.task.owner_id !== null
-                        ? (detail.people[String(row.task.owner_id)] ?? null)
-                        : null
-                    }
+                    owner={ownerLabel(row.task, detail.people)}
                     onSelect={onSelect}
                     onHover={setHovered}
                   />
@@ -581,7 +578,7 @@ function TaskBars({
   row: number;
   viewport: Viewport;
   dimmed: boolean;
-  owner: string | null;
+  owner: string;
   showCriticalPath: boolean;
   onSelect: (task: Task) => void;
   onHover: (name: string | null) => void;
@@ -683,7 +680,7 @@ function BarLabel({
   late,
 }: {
   task: Task;
-  owner: string | null;
+  owner: string;
   row: number;
   viewport: Viewport;
   late: number | null;
@@ -831,7 +828,7 @@ function Marker({
  * The most common owner rather than a list: the label answers "who do I go to
  * about this phase", and three names would answer nothing.
  */
-function ownerLabel(detail: CaseDetail, phase: string): string | null {
+function phaseOwner(detail: CaseDetail, phase: string): string | null {
   const counts = new Map<number, number>();
   for (const task of detail.tasks) {
     if ((task.phase || "") !== phase || task.owner_id === null) continue;
