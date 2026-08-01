@@ -219,6 +219,11 @@ h4 {
   font-weight: 600;
 }
 
+.segmented button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .toolbar,
 .filters,
 .wizard-nav {
@@ -520,6 +525,26 @@ textarea {
   color: var(--chart-text);
 }
 
+/* The controls sit outside the dark plot, on the page, because they act on
+   the view rather than being part of it. */
+.gantt-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.gantt-controls .spacer {
+  flex: 1;
+}
+
+/* Wide enough that the two zoom buttons do not jump around as the glyphs
+   change width. */
+.gantt-controls .segmented button {
+  min-width: 42px;
+  padding: 6px 12px;
+}
+
 .gantt-rail {
   flex: 0 0 var(--rail);
   width: var(--rail);
@@ -550,10 +575,23 @@ textarea {
   text-align: right;
 }
 
+/* Name and owner on one line, owner first so the names stay flush right and
+   read as a column. */
 .gantt-group {
+  flex-direction: row-reverse;
+  justify-content: flex-start;
   font-size: 15px;
   font-weight: 600;
   color: var(--chart-text);
+}
+
+.gantt-group-owner {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--chart-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gantt-row {
@@ -619,19 +657,10 @@ textarea {
 
 /* --- bars ---------------------------------------------------------------- */
 
-.bar-summary {
-  fill: var(--hue);
-}
-
 .bar-task {
-  /* Tasks sit a shade lighter than their summary, so the group bar stays the
-     dominant reading and its members clearly belong to it. */
+  /* A shade lighter than the phase hue, so a phase's steps read as a family
+     without any of them competing with the others. */
   fill: color-mix(in srgb, var(--hue) 72%, white);
-}
-
-.summary-owner {
-  font-size: 11px;
-  fill: var(--chart-text);
 }
 
 .hue-0 { --hue: var(--hue-0); }
