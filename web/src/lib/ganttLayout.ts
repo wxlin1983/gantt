@@ -26,7 +26,7 @@ export interface Tick {
 
 const MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
 
-export const ROW_HEIGHT = 34;
+export const ROW_HEIGHT = 46;
 /**
  * The phase bar: a thin plain rectangle spanning its tasks.
  *
@@ -35,10 +35,25 @@ export const ROW_HEIGHT = 34;
  * spanning them rather than by outweighing them.
  */
 export const SUMMARY_HEIGHT = 6;
-/** A task's bar. The heaviest mark on the chart, because it is the subject. */
-export const BAR_HEIGHT = 16;
+/**
+ * A task's bar. The heaviest mark on the chart, because it is the subject,
+ * and tall enough to carry two lines of label inside it: the step's name, and
+ * its dates with the person responsible.
+ */
+export const BAR_HEIGHT = 30;
 /** Corner radius for a task bar: rounded rectangle, not a capsule. */
-export const BAR_RADIUS = 5;
+export const BAR_RADIUS = 6;
+
+/**
+ * Rough advance width of a string, for deciding whether a label fits inside
+ * its bar. SVG cannot measure text before it is painted, and a layout that
+ * needs a paint to settle flickers, so this estimates instead. It errs wide:
+ * pushing a label outside a bar that could just have held it is a smaller
+ * mistake than having it spill over the end.
+ */
+export function textWidth(text: string, fontSize: number): number {
+  return text.length * fontSize * 0.56;
+}
 /**
  * The baseline is a thin ghost under the forecast rather than a second bar of
  * equal weight. It is a reference, not a competing reading, and giving it the

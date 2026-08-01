@@ -725,14 +725,66 @@ textarea {
   opacity: 0.22;
 }
 
-.delta {
+/* --- bar labels ----------------------------------------------------------- */
+
+/*
+ * Dark ink by default: a task bar is a light fill, and this is the only place
+ * in the chart where text sits on top of a saturated colour rather than on the
+ * dark ground.
+ */
+.bar-label text {
+  fill: #0e2836;
+  pointer-events: none;
+}
+
+.bar-label-name {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.bar-label-meta {
   font-size: 10px;
+  opacity: 0.8;
+}
+
+/* Outside the bar there is no fill behind the text, so it takes the chart's
+   own ink and steps back to muted -- it is annotation at that point.
+   The stroke is a knockout halo in the background colour, drawn under the
+   fill: a label in the margin lands on top of connectors, and without it the
+   two read as one tangle. */
+.bar-label.outside text {
+  fill: var(--chart-text);
+  stroke: var(--chart-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
+}
+
+.bar-label.outside .bar-label-meta {
   fill: var(--chart-muted);
+  opacity: 1;
+}
+
+/* A pending bar is an outline, so its interior is the dark ground. */
+.bars.is-pending .bar-label text,
+.bars.is-cancelled .bar-label text {
+  fill: var(--chart-text);
+}
+
+.bars.is-pending .bar-label-meta,
+.bars.is-cancelled .bar-label-meta {
+  fill: var(--chart-muted);
+  opacity: 1;
 }
 
 .delta-late {
+  fill: #b3121f;
+  font-weight: 700;
+}
+
+.bar-label.outside .delta-late,
+.bars.is-pending .delta-late {
   fill: #ff8a94;
-  font-weight: 600;
 }
 
 /* --- connectors ---------------------------------------------------------- */
@@ -755,6 +807,10 @@ textarea {
   font-size: 9px;
   fill: var(--chart-muted);
   text-anchor: middle;
+  stroke: var(--chart-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
 }
 
 .dep.dimmed {

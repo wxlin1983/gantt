@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CaseDetail, Task } from "../../api/types";
 import {
   STATUS_META,
+  formatMoment,
   formatSpan,
   isInstant,
   variance,
@@ -38,6 +39,7 @@ import {
   paddedRange,
   rowCentre,
   spanWidth,
+  textWidth,
   timeToX,
 } from "../../lib/ganttLayout";
 
@@ -45,6 +47,10 @@ const RAIL = 210;
 const AXIS = 46;
 /** Phase palette; index cycles, so a sixth phase reuses the first colour. */
 const PALETTE = 6;
+
+/** Label type sizes, shared with the fit estimate. */
+const NAME_SIZE = 11;
+const META_SIZE = 10;
 
 /** 1 means the chosen range fits the window exactly, with nothing to scroll. */
 const MIN_ZOOM = 1;
@@ -517,6 +523,11 @@ export function GanttChart({
                       hovered !== null && !connected.has(row.task.name)
                     }
                     showCriticalPath={showCriticalPath}
+                    owner={
+                      row.task.owner_id !== null
+                        ? (detail.people[String(row.task.owner_id)] ?? null)
+                        : null
+                    }
                     onSelect={onSelect}
                     onHover={setHovered}
                   />
@@ -561,6 +572,7 @@ function TaskBars({
   viewport,
   dimmed,
   showCriticalPath,
+  owner,
   onSelect,
   onHover,
 }: {
@@ -569,6 +581,7 @@ function TaskBars({
   row: number;
   viewport: Viewport;
   dimmed: boolean;
+  owner: string | null;
   showCriticalPath: boolean;
   onSelect: (task: Task) => void;
   onHover: (name: string | null) => void;
@@ -640,19 +653,78 @@ function TaskBars({
         />
       )}
 
-      {/* Only lateness is labelled. Running early against an as-late-as-
-          possible plan just means the task has slack, and printing "−19d 13h"
-          beside four of six bars buried the one number worth reading. The
-          full variance stays in the list view, where it has a column. */}
-      {late && delta >= 3600 && task.forecast_end && (
-        <text
-          x={timeToX(viewport, task.forecast_end) + 7}
-          y={rowCentre(row) + 3}
-          className="delta delta-late"
-        >
-          +{formatSpan(delta)}
-        </text>
-      )}
+      <BarLabel
+        task={task}
+        owner={owner}
+        row={row}
+        viewport={viewport}
+        late={late && delta !== null && delta >= 3600 ? delta : null}
+      />
+    </g>
+  );
+}
+
+/**
+ * The step's name, dates and owner, written into the bar.
+ *
+ * Inside when it fits, immediately outside when it does not -- a ten-minute
+ * step is a few pixels wide at most zoom levels, and clipping its label to
+ * nothing would be worse than putting it in the margin. Near the right edge it
+ * flips to the other side of the bar rather than running off the plot.
+ *
+ * Lateness is folded into the second line instead of getting its own floating
+ * text, which used to sit exactly where this label now goes.
+ */
+function BarLabel({
+  task,
+  owner,
+  row,
+  viewport,
+  late,
+}: {
+  task: Task;
+  owner: string | null;
+  row: number;
+  viewport: Viewport;
+  late: number | null;
+}) {
+  if (!task.forecast_start || !task.forecast_end) return null;
+
+  const name = task.display_name || task.name;
+  const when = isInstant(task)
+    ? formatMoment(task.forecast_end)
+    : `${formatMoment(task.forecast_start)} → ${formatMoment(
+        task.forecast_end,
+      )}`;
+  const meta = owner ? `${when} · ${owner}` : when;
+
+  const x = timeToX(viewport, task.forecast_start);
+  const width = isInstant(task)
+    ? BAR_HEIGHT
+    : spanWidth(viewport, task.forecast_start, task.forecast_end);
+  const needed =
+    Math.max(textWidth(name, NAME_SIZE), textWidth(meta, META_SIZE)) + 14;
+
+  const inside = !isInstant(task) && width >= needed;
+  // Outside on the right unless that would run past the plot, in which case
+  // the label sits to the left of the bar and is anchored at its end.
+  const flip = !inside && x + width + needed > viewport.width;
+  const anchorX = inside ? x + 8 : flip ? x - 8 : x + width + 8;
+
+  return (
+    <g
+      className={inside ? "bar-label" : "bar-label outside"}
+      textAnchor={flip ? "end" : "start"}
+    >
+      <text x={anchorX} y={rowCentre(row) - 2} className="bar-label-name">
+        {name}
+      </text>
+      <text x={anchorX} y={rowCentre(row) + 10} className="bar-label-meta">
+        {meta}
+        {late !== null && (
+          <tspan className="delta-late"> · +{formatSpan(late)}</tspan>
+        )}
+      </text>
     </g>
   );
 }

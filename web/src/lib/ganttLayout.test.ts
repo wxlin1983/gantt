@@ -351,8 +351,10 @@ describe("elbowPath", () => {
     const d = elbowPath(from, to);
     const longRun = horizontalRuns(d).sort((a, b) => b.length - a.length)[0]!;
     expect(longRun.length).toBeGreaterThan(700);
-    expect(Math.abs(longRun.y - from.y)).toBeGreaterThan(BAR_HEIGHT);
-    expect(Math.abs(longRun.y - to.y)).toBeGreaterThan(BAR_HEIGHT);
+    // Clear of the bar, which extends half its height either side of the row
+    // line -- that is what stops the run reading as one.
+    expect(Math.abs(longRun.y - from.y)).toBeGreaterThan(BAR_HEIGHT / 2);
+    expect(Math.abs(longRun.y - to.y)).toBeGreaterThan(BAR_HEIGHT / 2);
   });
 
   it("puts the gutter between the two rows, not beyond them", () => {
