@@ -1481,6 +1481,19 @@ PUT    /groups/{id}/members                整批取代成員清單
 DELETE /groups/{id}                        僅限沒有任務指向它時
 ```
 
+**行事曆**（§3.2）
+
+讀取只要登入即可；寫入一律需要管理員。驗證直接建一次 `BusinessCalendar`，與排程引擎共用同一套規則。
+
+```
+GET    /calendars                          清單，含 day_seconds 與可否編輯
+POST   /calendars
+PATCH  /calendars/{id}                     時區／工作時段／假日；`name` 不可改
+DELETE /calendars/{id}                     僅限非內建且無模板引用時
+```
+
+**修改行事曆只影響之後建立的 case。** 既有 case 的定義凍結在 `template_snapshot`，重算讀的是那份副本（§4.8）。這不是疏漏而是快照隔離的重點：加一天假日不該讓已經對外承諾的日期在背後移動。UI 必須把這句話寫在畫面上，否則管理員會以為功能沒生效。
+
 沒有「刪除使用者」。既有 case 記錄著誰負責過什麼，停用（`is_active`）保留那段記錄，刪除會摧毀它。`PATCH /users/{id}` 也拒絕讓呼叫者停用自己或取消自己的管理員權限（`E_SELF_LOCKOUT`）——那是一鍵造成、除了開 shell 沒別的辦法挽回的錯誤。
 
 **Task 模板**

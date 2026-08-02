@@ -39,6 +39,7 @@ def task_template_to_dsl(row: TaskTemplateRecord) -> dict[str, Any]:
         "label": row.display_name or "",
         "default_duration": row.duration_default,
         "schedule_mode": str(row.schedule_mode),
+        "calendar": (row.api_config or {}).get("calendar"),
         "task_para": row.para_schema or [],
         "task_api": row.task_api or "",
         "api_mode": str(row.api_mode) if row.api_mode else None,

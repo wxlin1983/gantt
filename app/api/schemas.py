@@ -373,3 +373,34 @@ class MemberRequest(Body):
 
 class SetMembersRequest(Body):
     members: list[MemberRequest] = Field(default_factory=list)
+
+
+# --- calendars -------------------------------------------------------------
+
+
+class CalendarOut(Out):
+    id: int
+    name: str
+    timezone: str
+    #: {"mon": [["09:00", "18:00"]], ...}
+    working_hours: dict[str, Any] = Field(default_factory=dict)
+    holidays: list[str] = Field(default_factory=list)
+    is_builtin: bool = False
+    #: What `1D` converts to on this calendar (§4.5), which is worth seeing
+    #: because that conversion has been a real source of error.
+    day_seconds: int = 0
+    #: `continuous` means 24x7 and the engine ignores its row entirely.
+    is_editable: bool = True
+
+
+class CreateCalendarRequest(Body):
+    name: str = Field(min_length=1, max_length=64)
+    timezone: str = Field(default="Asia/Taipei", max_length=64)
+    working_hours: dict[str, Any] = Field(default_factory=dict)
+    holidays: list[str] = Field(default_factory=list)
+
+
+class UpdateCalendarRequest(Body):
+    timezone: str | None = Field(default=None, max_length=64)
+    working_hours: dict[str, Any] | None = None
+    holidays: list[str] | None = None

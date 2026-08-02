@@ -331,6 +331,15 @@ textarea {
   min-width: 150px;
 }
 
+/* A label above its control, for form rows inside a dialog. */
+.stacked {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 12px 0;
+}
+
 .row-actions {
   display: flex;
   gap: 6px;

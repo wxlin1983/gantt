@@ -563,7 +563,16 @@ async def import_document(
                     ],
                     task_api=parsed.task_api or None,
                     api_mode=parsed.api_mode,
-                    api_config=parsed.api_config,
+                    # The calendar rides in `api_config`, the same blob
+                    # `case_tasks` already carries it in. There is no column
+                    # for it, so importing a task template that named one
+                    # silently dropped it and the task fell back to the
+                    # default office calendar.
+                    api_config=(
+                        {**parsed.api_config, "calendar": parsed.calendar}
+                        if parsed.calendar
+                        else parsed.api_config
+                    ),
                     allow_manual_override=parsed.allow_manual_override,
                     on_failure=parsed.on_failure,
                     created_by_id=actor_id,

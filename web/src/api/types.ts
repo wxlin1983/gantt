@@ -284,3 +284,17 @@ export interface GroupDetail {
   display_name: string;
   members: GroupMember[];
 }
+
+export interface CalendarDetail {
+  id: number;
+  name: string;
+  timezone: string;
+  /** {"mon": [["09:00", "18:00"]], ...} */
+  working_hours: Record<string, string[][]>;
+  holidays: string[];
+  is_builtin: boolean;
+  /** What `1D` converts to on this calendar. */
+  day_seconds: number;
+  /** False for `continuous`: the engine ignores that row entirely. */
+  is_editable: boolean;
+}

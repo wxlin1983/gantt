@@ -10,6 +10,7 @@ import type {
   ApiErrorBody,
   AuditEvent,
   CaseDetail,
+  CalendarDetail,
   CaseSummary,
   GroupDetail,
   HealthCounts,
@@ -209,6 +210,18 @@ export const api = {
     }),
   deleteGroup: (id: number) =>
     request<void>(`/groups/${id}`, { method: "DELETE" }),
+
+  // calendars
+  calendars: () => request<CalendarDetail[]>("/calendars"),
+  createCalendar: (body: Record<string, unknown>) =>
+    request<CalendarDetail>("/calendars", json(body)),
+  updateCalendar: (id: number, body: Record<string, unknown>) =>
+    request<CalendarDetail>(`/calendars/${id}`, {
+      ...json(body),
+      method: "PATCH",
+    }),
+  deleteCalendar: (id: number) =>
+    request<void>(`/calendars/${id}`, { method: "DELETE" }),
 
   taskTemplates: () =>
     request<{ name: string; display_name: string; task_api: string | null }[]>(

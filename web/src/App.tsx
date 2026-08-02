@@ -10,6 +10,7 @@ import { CaseList } from "./features/cases/CaseList";
 import { CreateWizard } from "./features/cases/CreateWizard";
 import { MyTasks } from "./features/cases/MyTasks";
 import { NotificationBell } from "./features/cases/NotificationBell";
+import { Calendars } from "./features/calendars/Calendars";
 import { People } from "./features/people/People";
 import { NewTemplate } from "./features/templates/NewTemplate";
 import { TemplateEditor } from "./features/templates/TemplateEditor";
@@ -41,6 +42,7 @@ export function App() {
         <NavLink to="/my-tasks">My tasks</NavLink>
         <NavLink to="/templates">Templates</NavLink>
         <NavLink to="/people">People</NavLink>
+        <NavLink to="/calendars">Calendars</NavLink>
         <span className="spacer" />
         <NotificationBell />
         <span className="muted small">{me.data.user.display_name}</span>
@@ -61,6 +63,7 @@ export function App() {
           <Route path="/cases/:id" element={<CaseDetailPage />} />
           <Route path="/my-tasks" element={<MyTasks />} />
           <Route path="/people" element={<People />} />
+          <Route path="/calendars" element={<Calendars />} />
           <Route path="/templates" element={<TemplateList />} />
           {/* Before the dynamic segment: "new" is a screen, not a name. */}
           <Route path="/templates/new" element={<NewTemplate />} />
