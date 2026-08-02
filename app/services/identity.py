@@ -156,7 +156,9 @@ async def create_user(
     user = User(
         username=username,
         display_name=display_name or username,
-        email=email,
+        # Blank becomes NULL: the unique constraint treats every empty string
+        # as the same value, so two accounts without an email would collide.
+        email=email or None,
         password_hash=hash_password(password) if password else None,
         is_active=True,
         is_template_admin=is_template_admin,
@@ -178,7 +180,7 @@ async def update_user(
 ) -> User:
     if display_name is not None:
         user.display_name = display_name
-    if email is not None and email != user.email:
+    if email is not None and (email or None) != user.email:
         clash = (
             await session.scalars(
                 select(User).where(User.email == email, User.id != user.id)
@@ -188,7 +190,7 @@ async def update_user(
             raise IdentityError(
                 "E_DUPLICATE_EMAIL", f"`{email}` is already in use"
             )
-        user.email = email
+        user.email = email or None
     if is_template_admin is not None:
         user.is_template_admin = is_template_admin
     if is_active is not None:

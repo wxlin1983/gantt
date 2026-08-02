@@ -392,6 +392,31 @@ class TestUpdateTask:
         # A later bulk role reassignment must not undo this
         assert by_name["test"].owner_source == "manual"
 
+    async def test_a_task_can_be_taken_off_its_owner(self, session, seeded):
+        """`None` used to mean "leave alone", so this was impossible."""
+        case = await make_case(session, seeded)
+        by_name = {task.name: task for task in case.tasks}
+        assert by_name["test"].owner_id is not None
+
+        await cases.update_task(
+            session, seeded["pm"], case, by_name["test"], owner_id=None
+        )
+        assert by_name["test"].owner_id is None
+        # Deliberately nobody, which is not the same as a role that never
+        # resolved -- the UI says so differently.
+        assert by_name["test"].owner_source == "manual"
+
+    async def test_omitting_the_owner_leaves_it_alone(self, session, seeded):
+        case = await make_case(session, seeded)
+        by_name = {task.name: task for task in case.tasks}
+        before = by_name["test"].owner_id
+
+        await cases.update_task(
+            session, seeded["pm"], case, by_name["test"], duration_seconds=3600
+        )
+        assert by_name["test"].owner_id == before
+        assert by_name["test"].owner_source == "role:tester"
+
     async def test_stale_version_is_rejected(self, session, seeded):
         case = await make_case(session, seeded)
         by_name = {task.name: task for task in case.tasks}

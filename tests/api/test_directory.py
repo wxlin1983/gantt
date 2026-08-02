@@ -60,6 +60,17 @@ class TestCreatingUsers:
         )
         assert response.json()["error"]["code"] == "E_DUPLICATE_EMAIL"
 
+    async def test_two_people_may_both_have_no_email(self, as_admin):
+        """`email` was NOT NULL and unique, so blanks collided.
+
+        Adding a second colleague without a mailbox failed on the constraint,
+        which is the first thing anyone does with this page.
+        """
+        first = await as_admin.post("/users", json={"username": "noa"})
+        second = await as_admin.post("/users", json={"username": "nob"})
+        assert first.status_code == 201
+        assert second.status_code == 201
+
     async def test_a_short_password_is_refused(self, as_admin):
         response = await as_admin.post(
             "/users", json={"username": "g1", "password": "short"}
@@ -207,3 +218,71 @@ class TestGroups:
                 f"/groups/{groups[0]['id']}/members", json={"members": []}
             )
         ).status_code == 403
+
+
+class TestAssigningATaskOwner:
+    """The drawer's owner picker, over the wire (implement.md §8.4)."""
+
+    async def test_a_task_can_be_given_and_taken_off_an_owner(
+        self, as_admin
+    ):
+        created = (
+            await as_admin.post(
+                "/cases",
+                json={
+                    "name": "reassignable",
+                    "template_name": "launch",
+                    "target_date": "2026-09-30T18:00:00Z",
+                    "params": {"test_hours": 16, "needs_review": True},
+                    "role_assignments": {"owner": "pm", "tester": "qa"},
+                },
+            )
+        ).json()
+        task = next(t for t in created["tasks"] if t["name"] == "test")
+        users = (await as_admin.get("/users")).json()
+        outsider = next(u for u in users if u["username"] == "outsider")
+
+        moved = await as_admin.patch(
+            f"/cases/{created['id']}/tasks/{task['id']}",
+            json={"owner_id": outsider["id"]},
+        )
+        after = next(
+            t for t in moved.json()["tasks"] if t["name"] == "test"
+        )
+        assert after["owner_id"] == outsider["id"]
+        assert after["owner_source"] == "manual"
+        # The name map has to grow with it, or the UI shows a bare id
+        assert str(outsider["id"]) in moved.json()["people"]
+
+        cleared = await as_admin.patch(
+            f"/cases/{created['id']}/tasks/{task['id']}",
+            json={"owner_id": None},
+        )
+        assert next(
+            t for t in cleared.json()["tasks"] if t["name"] == "test"
+        )["owner_id"] is None
+
+    async def test_omitting_owner_id_does_not_clear_it(self, as_admin):
+        created = (
+            await as_admin.post(
+                "/cases",
+                json={
+                    "name": "duration only",
+                    "template_name": "launch",
+                    "target_date": "2026-09-30T18:00:00Z",
+                    "params": {"test_hours": 16, "needs_review": True},
+                    "role_assignments": {"owner": "pm", "tester": "qa"},
+                },
+            )
+        ).json()
+        task = next(t for t in created["tasks"] if t["name"] == "test")
+        assert task["owner_id"] is not None
+
+        response = await as_admin.patch(
+            f"/cases/{created['id']}/tasks/{task['id']}",
+            json={"duration_seconds": 7200},
+        )
+        after = next(
+            t for t in response.json()["tasks"] if t["name"] == "test"
+        )
+        assert after["owner_id"] == task["owner_id"]

@@ -37,7 +37,8 @@ class UserOut(Out):
     id: int
     username: str
     display_name: str
-    email: str
+    #: Optional: an internal account need not have a mailbox.
+    email: str | None = None
     is_template_admin: bool
 
 
@@ -314,7 +315,7 @@ class PersonOut(Out):
     id: int
     username: str
     display_name: str
-    email: str
+    email: str | None = None
     is_active: bool
     is_template_admin: bool
     #: Whether a local password is set. The hash itself never leaves the

@@ -5,7 +5,11 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError, api } from "../../api/client";
-import type { CaseDetail as Detail, Task } from "../../api/types";
+import type {
+  CaseDetail as Detail,
+  Person,
+  Task,
+} from "../../api/types";
 import { GanttChart } from "../../components/gantt/GanttChart";
 import { InsertTaskDialog } from "./InsertTaskDialog";
 import {
@@ -33,6 +37,10 @@ export function CaseDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [inserting, setInserting] = useState(false);
   const [editingTarget, setEditingTarget] = useState(false);
+
+  // Cached across the app, so the drawer can name people without a fetch of
+  // its own each time it opens.
+  const people = useQuery({ queryKey: ["users"], queryFn: api.users });
 
   const detail = useQuery({
     queryKey: ["case", caseId],
@@ -306,6 +314,13 @@ export function CaseDetailPage() {
           onComplete={(note) =>
             complete.mutate({ taskId: selected.id, note })
           }
+          people={people.data}
+          onSaveOwner={(ownerId) =>
+            update.mutate({
+              taskId: selected.id,
+              body: { owner_id: ownerId, expected_version: selected.version },
+            })
+          }
           onSaveDuration={(seconds) =>
             update.mutate({
               taskId: selected.id,
@@ -488,9 +503,11 @@ function TaskDrawer({
   task,
   detail,
   busy,
+  people,
   onClose,
   onComplete,
   onSaveDuration,
+  onSaveOwner,
   onRetry,
   onDelete,
 }: {
@@ -498,15 +515,18 @@ function TaskDrawer({
   task: Task;
   detail: Detail;
   busy: boolean;
+  people: Person[] | undefined;
   onClose: () => void;
   onComplete: (note: string) => void;
   onSaveDuration: (seconds: number) => void;
+  onSaveOwner: (ownerId: number | null) => void;
   onRetry: () => void;
   onDelete: () => void;
 }) {
   const [hours, setHours] = useState(task.duration_seconds / 3600);
   const [note, setNote] = useState("");
   const changed = hours * 3600 !== task.duration_seconds;
+  const canEdit = Boolean(task.permissions.can_edit);
 
   // Escape closes it. The button is the obvious way out, but a panel that
   // covers a third of the screen needs one that does not depend on finding
@@ -570,7 +590,32 @@ function TaskDrawer({
 
         <dt>Owner</dt>
         <dd>
-          {ownerLabel(task, detail.people)}
+          {canEdit ? (
+            <select
+              value={task.owner_id === null ? "" : String(task.owner_id)}
+              disabled={busy}
+              onChange={(event) =>
+                onSaveOwner(
+                  event.target.value === ""
+                    ? null
+                    : Number(event.target.value),
+                )
+              }
+            >
+              <option value="">unassigned</option>
+              {(people ?? [])
+                .filter(
+                  (person) => person.is_active || person.id === task.owner_id,
+                )
+                .map((person) => (
+                  <option key={person.id} value={person.id}>
+                    {person.display_name}
+                  </option>
+                ))}
+            </select>
+          ) : (
+            ownerLabel(task, detail.people)
+          )}
           {/* Where the owner came from matters: changing it here affects only
               this task, not everyone holding the same role (design.md §5). */}
           {task.owner_source.startsWith("role:") && (

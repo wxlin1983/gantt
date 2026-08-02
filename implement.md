@@ -1527,6 +1527,10 @@ POST   /cases/{id}/tasks/simulate             模擬變更的影響（見 8.5）
 GET    /cases/{id}/tasks/{task_id}/runs       API 執行紀錄
 ```
 
+`PATCH` 的 `owner_id` 與 `group_id` **區分「沒送」與「送了 null」**：沒送代表不動，`null` 代表設為「沒有負責人」。兩者只能從 client 實際送出的欄位分辨（pydantic 的 `model_fields_set`），服務層以 `UNSET` 哨符接收。先前 `None` 同時代表這兩件事，於是任務可以被指派、卻永遠拿不掉——drawer 沒有辦法表達「沒有人」。
+
+手動設定（含設為沒有人）一律把 `owner_source` 標為 `manual`：那與「模板要了一個角色但沒解析到人」不同，UI 上顯示的文字也不同（§4.1）。
+
 **個人**
 
 ```
@@ -1968,6 +1972,7 @@ services:
 - **WebSocket 即時推送**（§8.8）：尚未實作。前端靠 TanStack Query 的 staleTime 與視窗聚焦重取，通知鈴則每分鐘輪詢——worker 的掃描本來就是五分鐘一次，輪詢更快也不會有新消息。
 - **Gantt 列虛擬化**：`visibleRows` 已實作並測試，但 `GanttChart` 目前一次渲染全部列；任務數上百時要接上。
 - **依賴線上的插入按鈕**（design.md §6 的觸發方式之一）：目前從工具列的「+ Insert step」進入，尚未做成點依賴線中點的 `⊕`。
+- **Task drawer 只能改工期與負責人**（design.md §5 另畫了群組、時間計算方式、前置任務與任務參數）。後端 `PATCH` 全部支援，缺的是欄位。
 
 階段 1–3 是後端骨幹，階段 4 讓系統可被實際使用，階段 5–6 補上自動化與自助管理。若需要更早交付，階段 4 結束時的系統已可作為「手動回報版」上線試用。
 

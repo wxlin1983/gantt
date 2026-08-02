@@ -38,7 +38,7 @@ def _person(user) -> PersonOut:
         id=user.id,
         username=user.username,
         display_name=user.display_name,
-        email=user.email,
+        email=user.email or "",
         is_active=user.is_active,
         is_template_admin=user.is_template_admin,
         has_password=bool(user.password_hash),

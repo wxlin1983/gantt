@@ -16,7 +16,10 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True)
     display_name: Mapped[str] = mapped_column(String(128))
-    email: Mapped[str] = mapped_column(String(256), unique=True)
+    #: Nullable, because the unique constraint treats every blank as the same
+    #: value: two colleagues added without an email collided on it. NULLs do
+    #: not collide, and an internal account without a mailbox is ordinary.
+    email: Mapped[str | None] = mapped_column(String(256), unique=True)
     #: NULL when the account is federated (OIDC/SAML) rather than local.
     password_hash: Mapped[str | None] = mapped_column(String(256))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

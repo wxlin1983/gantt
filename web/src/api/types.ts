@@ -15,7 +15,7 @@ export interface User {
   id: number;
   username: string;
   display_name: string;
-  email: string;
+  email: string | null;
   is_template_admin: boolean;
 }
 
@@ -264,7 +264,7 @@ export interface Person {
   id: number;
   username: string;
   display_name: string;
-  email: string;
+  email: string | null;
   is_active: boolean;
   is_template_admin: boolean;
   has_password: boolean;

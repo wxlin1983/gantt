@@ -56,6 +56,20 @@ class CaseError(Exception):
         super().__init__(message)
 
 
+class _Unset:
+    """Distinguishes "not supplied" from "explicitly set to nothing".
+
+    `owner_id=None` used to mean both, so a task could be given an owner but
+    never taken off one -- the drawer had no way to say "nobody".
+    """
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "UNSET"
+
+
+UNSET = _Unset()
+
+
 def now_utc() -> datetime:
     return datetime.now(tz=UTC)
 
@@ -607,8 +621,8 @@ async def update_task(
     task: CaseTask,
     *,
     duration_seconds: int | None = None,
-    owner_id: int | None = None,
-    group_id: int | None = None,
+    owner_id: int | None | _Unset = UNSET,
+    group_id: int | None | _Unset = UNSET,
     params: dict[str, Any] | None = None,
     display_name: str | None = None,
     expected_version: int | None = None,
@@ -616,7 +630,9 @@ async def update_task(
     """Edit a task and reforecast.
 
     Changing the owner marks its source ``manual``, so a later bulk role
-    reassignment will not silently undo the choice (§4.10).
+    reassignment will not silently undo the choice (§4.10). That holds when
+    the change is to nobody: somebody decided this task has no owner, which is
+    different from the template asking for a role that never resolved.
     """
     if expected_version is not None and expected_version != task.version:
         raise CaseError(
@@ -637,10 +653,10 @@ async def update_task(
         task.duration_seconds = duration_seconds
         # An explicit duration overrides whatever unit the template used.
         task.api_config = {**(task.api_config or {}), "duration_days": None}
-    if owner_id is not None:
+    if not isinstance(owner_id, _Unset):
         task.owner_id = owner_id
         task.owner_source = "manual"
-    if group_id is not None:
+    if not isinstance(group_id, _Unset):
         task.group_id = group_id
     if params is not None:
         task.params = params

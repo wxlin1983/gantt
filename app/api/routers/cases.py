@@ -377,8 +377,18 @@ async def update_task(
         case,
         task,
         duration_seconds=body.duration_seconds,
-        owner_id=body.owner_id,
-        group_id=body.group_id,
+        # `null` means "set to nobody" and absent means "leave alone"; the two
+        # are only distinguishable through the fields the client actually sent.
+        owner_id=(
+            body.owner_id
+            if "owner_id" in body.model_fields_set
+            else case_service.UNSET
+        ),
+        group_id=(
+            body.group_id
+            if "group_id" in body.model_fields_set
+            else case_service.UNSET
+        ),
         params=body.params,
         display_name=body.display_name,
         expected_version=body.expected_version,
@@ -450,8 +460,18 @@ async def insert_task(
         display_name=body.display_name,
         task_template=body.task_template,
         duration_seconds=body.duration_seconds,
-        owner_id=body.owner_id,
-        group_id=body.group_id,
+        # `null` means "set to nobody" and absent means "leave alone"; the two
+        # are only distinguishable through the fields the client actually sent.
+        owner_id=(
+            body.owner_id
+            if "owner_id" in body.model_fields_set
+            else case_service.UNSET
+        ),
+        group_id=(
+            body.group_id
+            if "group_id" in body.model_fields_set
+            else case_service.UNSET
+        ),
         params=body.params,
         predecessors=body.predecessors,
         successors=body.successors,
