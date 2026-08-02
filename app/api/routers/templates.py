@@ -10,7 +10,7 @@ from pydantic import Field
 from sqlalchemy import select
 
 from app.auth import permissions
-from app.models import TaskTemplateRecord
+from app.models import GanttTemplateRecord, TaskTemplateRecord
 from app.services import credentials, schedules
 from app.services import templates as template_service
 
@@ -204,9 +204,7 @@ async def export_template(
     return Response(
         content=document,
         media_type="application/yaml",
-        headers={
-            "content-disposition": f'attachment; filename="{name}.yaml"'
-        },
+        headers={"content-disposition": f'attachment; filename="{name}.yaml"'},
     )
 
 
@@ -361,6 +359,56 @@ async def put_task_template(
         setattr(row, field_name, value)
     await session.flush()
     return {"name": row.name}
+
+
+@router.delete(
+    "/task-templates/{name}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_task_template(
+    name: str, session: SessionDep, principal: PrincipalDep
+) -> None:
+    """Remove a task template not referenced by any gantt template (§8.1)."""
+    require(
+        permissions.can_manage_templates(principal),
+        "only a template admin can delete task templates",
+    )
+    row = (
+        await session.scalars(
+            select(TaskTemplateRecord).where(TaskTemplateRecord.name == name)
+        )
+    ).one_or_none()
+    if row is None:
+        raise ApiError(
+            "E_TEMPLATE_NOT_FOUND",
+            f"task template {name!r} does not exist",
+        )
+    # A task template that appears in any gantt template's definition cannot be
+    # deleted: the gantt template would silently reference a missing template.
+    referencing: list[str] = []
+    gantt_rows = (await session.scalars(select(GanttTemplateRecord))).all()
+    for gt in gantt_rows:
+        flow = gt.definition.get("flow") or gt.definition.get("gantt", {}).get(
+            "flow", []
+        )
+        if not isinstance(flow, list):
+            continue
+        for item in flow:
+            tasks = item.get("tasks", [item]) if isinstance(item, dict) else []
+            for task in tasks:
+                if (
+                    isinstance(task, dict)
+                    and task.get("uses", task.get("task_template")) == name
+                ):
+                    referencing.append(gt.name)
+                    break
+    if referencing:
+        raise ApiError(
+            "E_TEMPLATE_IN_USE",
+            f"task template {name!r} is referenced by: "
+            + ", ".join(sorted(set(referencing))),
+            details={"referencing": sorted(set(referencing))},
+        )
+    await session.delete(row)
 
 
 @router.get("/handlers")

@@ -13,6 +13,7 @@ import { NotificationBell } from "./features/cases/NotificationBell";
 import { Calendars } from "./features/calendars/Calendars";
 import { People } from "./features/people/People";
 import { NewTemplate } from "./features/templates/NewTemplate";
+import { TaskTemplateLibrary } from "./features/templates/TaskTemplateLibrary";
 import { TemplateEditor } from "./features/templates/TemplateEditor";
 import { TemplateList } from "./features/templates/TemplateList";
 
@@ -41,6 +42,7 @@ export function App() {
         <NavLink to="/cases">Cases</NavLink>
         <NavLink to="/my-tasks">My tasks</NavLink>
         <NavLink to="/templates">Templates</NavLink>
+        <NavLink to="/task-templates">Task library</NavLink>
         <NavLink to="/people">People</NavLink>
         <NavLink to="/calendars">Calendars</NavLink>
         <span className="spacer" />
@@ -68,6 +70,7 @@ export function App() {
           {/* Before the dynamic segment: "new" is a screen, not a name. */}
           <Route path="/templates/new" element={<NewTemplate />} />
           <Route path="/templates/:name" element={<TemplateEditor />} />
+          <Route path="/task-templates" element={<TaskTemplateLibrary />} />
           <Route path="*" element={<p className="page">Not found</p>} />
         </Routes>
       </main>

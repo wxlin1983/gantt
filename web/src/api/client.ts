@@ -224,9 +224,26 @@ export const api = {
     request<void>(`/calendars/${id}`, { method: "DELETE" }),
 
   taskTemplates: () =>
-    request<{ name: string; display_name: string; task_api: string | null }[]>(
-      "/task-templates",
-    ),
+    request<
+      {
+        name: string;
+        display_name: string;
+        duration_default: string;
+        schedule_mode: string;
+        task_api: string | null;
+        api_mode: string | null;
+        api_config: Record<string, unknown>;
+        on_failure: string;
+        allow_manual_override: boolean;
+      }[]
+    >("/task-templates"),
+  putTaskTemplate: (name: string, body: Record<string, unknown>) =>
+    request<{ name: string }>(`/task-templates/${name}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteTaskTemplate: (name: string) =>
+    request<void>(`/task-templates/${name}`, { method: "DELETE" }),
   handlers: () =>
     request<{ name: string; builtin: boolean; description: string }[]>(
       "/handlers",
