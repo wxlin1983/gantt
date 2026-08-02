@@ -95,6 +95,10 @@ export const api = {
     request<CaseSummary[]>(
       `/cases?${new URLSearchParams(params).toString()}`,
     ),
+  exportCases: (params: Record<string, string> = {}) =>
+    fetch(`${BASE}/cases/export?${new URLSearchParams(params).toString()}`, {
+      credentials: "same-origin",
+    }),
   caseSummary: () => request<HealthCounts>("/cases/summary"),
   caseDetail: (id: number) => request<CaseDetail>(`/cases/${id}`),
   createCase: (body: unknown) => request<CaseDetail>("/cases", json(body)),

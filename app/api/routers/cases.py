@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import io
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
@@ -111,9 +112,7 @@ async def create_case(
     user: UserDep,
     principal: PrincipalDep,
 ) -> CaseDetailOut:
-    require(
-        permissions.can_create_case(principal), "you cannot create cases"
-    )
+    require(permissions.can_create_case(principal), "you cannot create cases")
     case = await case_service.create(
         session,
         user,
@@ -229,6 +228,9 @@ async def list_cases(
     health: Annotated[CaseHealth | None, Query()] = None,
     template: Annotated[str | None, Query()] = None,
     owner_id: Annotated[int | None, Query()] = None,
+    group_id: Annotated[int | None, Query()] = None,
+    target_before: Annotated[datetime | None, Query()] = None,
+    target_after: Annotated[datetime | None, Query()] = None,
     q: Annotated[str | None, Query()] = None,
     include_archived: Annotated[bool, Query()] = False,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -252,6 +254,27 @@ async def list_cases(
         statement = statement.where(GanttCase.template_name == template)
     if owner_id is not None:
         statement = statement.where(GanttCase.owner_id == owner_id)
+    if group_id is not None:
+        # Any task in the case belonging to the group counts.
+        statement = statement.where(
+            GanttCase.id.in_(
+                select(CaseTask.case_id).where(CaseTask.group_id == group_id)
+            )
+        )
+    if target_before is not None:
+        tb = (
+            target_before
+            if target_before.tzinfo
+            else target_before.replace(tzinfo=UTC)
+        )
+        statement = statement.where(GanttCase.target_date <= tb)
+    if target_after is not None:
+        ta = (
+            target_after
+            if target_after.tzinfo
+            else target_after.replace(tzinfo=UTC)
+        )
+        statement = statement.where(GanttCase.target_date >= ta)
     if q:
         # Case name or any task name: "which cases did a safety review?" is a
         # question people actually ask (design.md §8.3).
@@ -296,6 +319,265 @@ async def list_cases(
         else {}
     )
     return [_summary(case, people) for case in ranked]
+
+
+# --- export ----------------------------------------------------------------
+
+
+@router.get("/cases/export")
+async def export_cases(
+    session: SessionDep,
+    principal: PrincipalDep,
+    case_status: Annotated[CaseStatus | None, Query(alias="status")] = None,
+    health: Annotated[CaseHealth | None, Query()] = None,
+    template: Annotated[str | None, Query()] = None,
+    owner_id: Annotated[int | None, Query()] = None,
+    group_id: Annotated[int | None, Query()] = None,
+    target_before: Annotated[datetime | None, Query()] = None,
+    target_after: Annotated[datetime | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
+    include_archived: Annotated[bool, Query()] = False,
+) -> Response:
+    """Excel workbook: cases sheet + task history sheet (design.md §8).
+
+    Accepts the same filters as GET /cases so the download reflects exactly
+    what the user is looking at.
+    """
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    require(permissions.can_view(principal), "sign in first")
+
+    # Reuse the same query logic as list_cases but without pagination.
+    stmt = select(GanttCase).options(selectinload(GanttCase.tasks))
+    if not include_archived:
+        stmt = stmt.where(GanttCase.archived_at.is_(None))
+    if case_status is not None:
+        stmt = stmt.where(GanttCase.status == case_status)
+    if health is not None:
+        stmt = stmt.where(GanttCase.health == health)
+    if template is not None:
+        stmt = stmt.where(GanttCase.template_name == template)
+    if owner_id is not None:
+        stmt = stmt.where(GanttCase.owner_id == owner_id)
+    if group_id is not None:
+        stmt = stmt.where(
+            GanttCase.id.in_(
+                select(CaseTask.case_id).where(CaseTask.group_id == group_id)
+            )
+        )
+    if target_before is not None:
+        tb = (
+            target_before
+            if target_before.tzinfo
+            else target_before.replace(tzinfo=UTC)
+        )
+        stmt = stmt.where(GanttCase.target_date <= tb)
+    if target_after is not None:
+        ta = (
+            target_after
+            if target_after.tzinfo
+            else target_after.replace(tzinfo=UTC)
+        )
+        stmt = stmt.where(GanttCase.target_date >= ta)
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                GanttCase.name.ilike(pattern),
+                GanttCase.id.in_(
+                    select(CaseTask.case_id).where(
+                        or_(
+                            CaseTask.name.ilike(pattern),
+                            CaseTask.display_name.ilike(pattern),
+                        )
+                    )
+                ),
+            )
+        )
+
+    rows = (await session.scalars(stmt)).unique().all()
+
+    # Resolve user and group names once for the whole export.
+    all_user_ids: set[int] = set()
+    all_group_ids: set[int] = set()
+    for case in rows:
+        if case.owner_id:
+            all_user_ids.add(case.owner_id)
+        for task in case.tasks:
+            if task.owner_id:
+                all_user_ids.add(task.owner_id)
+            if task.group_id:
+                all_group_ids.add(task.group_id)
+
+    user_names: dict[int, str] = {}
+    if all_user_ids:
+        for u in await session.scalars(
+            select(User).where(User.id.in_(all_user_ids))
+        ):
+            user_names[u.id] = u.display_name or u.username
+
+    group_names: dict[int, str] = {}
+    if all_group_ids:
+        for g in await session.scalars(
+            select(Group).where(Group.id.in_(all_group_ids))
+        ):
+            group_names[g.id] = g.display_name or g.name
+
+    def fmt_dt(dt: datetime | None) -> str:
+        if dt is None:
+            return ""
+        return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
+
+    def fmt_hrs(secs: int | None) -> str:
+        if secs is None:
+            return ""
+        return f"{secs / 3600:.1f}h"
+
+    wb = openpyxl.Workbook()
+
+    # ---- Sheet 1: Cases ----
+    ws_cases = wb.active
+    ws_cases.title = "Cases"
+    header_font = Font(bold=True)
+    header_fill = PatternFill("solid", fgColor="D9E1F2")
+
+    case_cols = [
+        "ID",
+        "Name",
+        "Template",
+        "Version",
+        "Status",
+        "Health",
+        "Owner",
+        "Progress %",
+        "Target date",
+        "Forecast end",
+        "Overshoot (h)",
+        "Created at",
+        "Completed at",
+    ]
+    for col_idx, col_name in enumerate(case_cols, 1):
+        cell = ws_cases.cell(row=1, column=col_idx, value=col_name)
+        cell.font = header_font
+        cell.fill = header_fill
+
+    for case in rows:
+        forecast = case.forecast_end
+        overshoot = (
+            max(0, (forecast - case.target_date).total_seconds()) / 3600
+            if forecast
+            else None
+        )
+        ws_cases.append(
+            [
+                case.id,
+                case.name,
+                case.template_name,
+                case.template_version,
+                str(
+                    case.status.value
+                    if hasattr(case.status, "value")
+                    else case.status
+                ),
+                str(
+                    case.health.value
+                    if case.health and hasattr(case.health, "value")
+                    else (case.health or "")
+                ),
+                user_names.get(case.owner_id or -1, ""),
+                round((case.progress_ratio or 0) * 100, 1),
+                fmt_dt(case.target_date),
+                fmt_dt(case.forecast_end),
+                round(overshoot, 1) if overshoot is not None else "",
+                fmt_dt(case.created_at),
+                fmt_dt(case.completed_at),
+            ]
+        )
+
+    for col_idx in range(1, len(case_cols) + 1):
+        ws_cases.column_dimensions[get_column_letter(col_idx)].auto_size = True
+
+    # ---- Sheet 2: Task history ----
+    ws_tasks = wb.create_sheet("Task history")
+    task_cols = [
+        "Case ID",
+        "Case name",
+        "Task ID",
+        "Task name",
+        "Phase",
+        "Status",
+        "Owner",
+        "Group",
+        "Duration (h)",
+        "Planned start",
+        "Planned end",
+        "Forecast start",
+        "Forecast end",
+        "Actual start",
+        "Actual end",
+        "Completion source",
+        "Completion note",
+        "On critical path",
+        "Optional",
+    ]
+    for col_idx, col_name in enumerate(task_cols, 1):
+        cell = ws_tasks.cell(row=1, column=col_idx, value=col_name)
+        cell.font = header_font
+        cell.fill = header_fill
+
+    for case in rows:
+        for task in sorted(case.tasks, key=lambda t: t.sort_order):
+            ws_tasks.append(
+                [
+                    case.id,
+                    case.name,
+                    task.id,
+                    task.display_name or task.name,
+                    task.phase or "",
+                    str(
+                        task.status.value
+                        if hasattr(task.status, "value")
+                        else task.status
+                    ),
+                    user_names.get(task.owner_id or -1, ""),
+                    group_names.get(task.group_id or -1, ""),
+                    round(task.duration_seconds / 3600, 2),
+                    fmt_dt(task.baseline_start),
+                    fmt_dt(task.baseline_end),
+                    fmt_dt(task.forecast_start),
+                    fmt_dt(task.forecast_end),
+                    fmt_dt(task.actual_start),
+                    fmt_dt(task.actual_end),
+                    str(
+                        task.completion_source.value
+                        if task.completion_source
+                        and hasattr(task.completion_source, "value")
+                        else (task.completion_source or "")
+                    ),
+                    task.completion_note or "",
+                    "Yes" if task.is_on_critical_path else "No",
+                    "Yes" if task.is_optional else "No",
+                ]
+            )
+
+    for col_idx in range(1, len(task_cols) + 1):
+        ws_tasks.column_dimensions[get_column_letter(col_idx)].auto_size = True
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    ts = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M")
+    filename = f"gantt-cases-{ts}.xlsx"
+    return Response(
+        content=buf.read(),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"content-disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # --- single case -----------------------------------------------------------
@@ -354,9 +636,7 @@ async def cancel_case(
 # --- tasks -----------------------------------------------------------------
 
 
-@router.patch(
-    "/cases/{case_id}/tasks/{task_id}", response_model=CaseDetailOut
-)
+@router.patch("/cases/{case_id}/tasks/{task_id}", response_model=CaseDetailOut)
 async def update_task(
     case_id: int,
     task_id: int,
@@ -629,9 +909,7 @@ async def task_runs(
     return [TaskRunOut.model_validate(row) for row in rows]
 
 
-@router.post(
-    "/cases/{case_id}/reset-baseline", response_model=CaseDetailOut
-)
+@router.post("/cases/{case_id}/reset-baseline", response_model=CaseDetailOut)
 async def reset_baseline(
     case_id: int,
     body: ResetBaselineRequest,
@@ -740,9 +1018,7 @@ async def mark_read(
     await session.flush()
 
 
-@router.post(
-    "/notifications/read-all", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.post("/notifications/read-all", status_code=status.HTTP_204_NO_CONTENT)
 async def mark_all_read(session: SessionDep, user: UserDep) -> None:
     from sqlalchemy import update
 
@@ -854,9 +1130,7 @@ async def _detail(
 
     edges = await case_service.dependencies(session, case.id)
     by_id = {task.id: task for task in case.tasks}
-    ordered = sorted(
-        case.tasks, key=lambda task: (task.sort_order, task.name)
-    )
+    ordered = sorted(case.tasks, key=lambda task: (task.sort_order, task.name))
 
     owner_ids = {task.owner_id for task in case.tasks if task.owner_id}
     owner_ids.discard(None)
@@ -925,5 +1199,3 @@ async def _detail(
         people={str(key): value for key, value in people.items()},
         groups={str(key): value for key, value in groups.items()},
     )
-
-
